@@ -33,12 +33,14 @@ import {
   SWEEP_EFFECT_NOTE,
   type LecturePanel,
 } from "./lecture/text.ts";
-import { drawTopView, sweepAngleDeg } from "./lidarView.ts";
+import { drawTopView, pickNearestPoint, sweepAngleDeg, topViewLayout } from "./lidarView.ts";
+import { placeTooltip, tooltipLines } from "./tooltip.ts";
 import {
   MotionDetector,
   ScanHistory,
   ScanSimulator,
   projectTop,
+  scanLagFrames,
   scanLine,
   type RowBand,
   type ScanPoint,
@@ -52,17 +54,14 @@ import {
   type Scene3DOptions,
 } from "./scene3d.ts";
 import type { DistanceModel } from "./geometry.ts";
-import { SerialConnection, isWebSerialSupported, type SerialState } from "./serial.ts";
-import { INTERVAL_GAP_FACTOR, STREAM_REJECT_REASONS } from "./stats.ts";
 import {
-  AutoRange,
-  describeZone,
-  firstTargets,
-  minMax,
-  zoneAt,
-  type ColorBy,
-  type Range,
-} from "./view.ts";
+  SerialConnection,
+  isWebSerialSupported,
+  type DetailLevel,
+  type SerialState,
+} from "./serial.ts";
+import { INTERVAL_GAP_FACTOR, STREAM_REJECT_REASONS } from "./stats.ts";
+import { AutoRange, firstTargets, minMax, zoneAt, type ColorBy, type Range } from "./view.ts";
 
 /** id で要素を取り、型を実行時に確かめる(index.html と食い違ったら起動時に分かるようにする) */
 function el<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -91,7 +90,7 @@ const ui = {
   imgDistance: el("img-distance", HTMLCanvasElement),
   imgSignal: el("img-signal", HTMLCanvasElement),
   imgSpads: el("img-spads", HTMLCanvasElement),
-  zoneInfo: el("zone-info", HTMLPreElement),
+  zoneTooltip: el("zone-tooltip", HTMLDivElement),
   stats: el("stats", HTMLDListElement),
   status: el("status", HTMLDListElement),
   logs: el("logs", HTMLOListElement),
@@ -180,8 +179,13 @@ interface AppState {
   latestFrame: RangingFrame | null;
   latestStatus: StatusMessage | null;
   logs: LogEntry[];
-  /** マウスが乗っている画面のセル(行・列)。ゾーンは描画のたびに現在の向きで求める */
-  hoverCell: { readonly row: number; readonly col: number } | null;
+  /**
+   * マウスが乗っている図と、その図の描画の座標での位置。ゾーンは描画のたびに、現在の向き・データ・大きさで求め直す
+   * (乗せたまま向きやデータが変わっても追随するため)
+   */
+  hover: HoverState | null;
+  /** 走査型の模擬の、センサーから見た列ごとの元のフレームの seq(左端の列から) */
+  simulatedSources: readonly number[];
   /**
    * このデータ源(接続・再生の開始)で最後に受け取った状態メッセージの flags。
    * 反転のチェックボックスは、データ源ごとの最初の状態メッセージと、flags が変わったとき
@@ -218,7 +222,8 @@ const state: AppState = {
   latestFrame: null,
   latestStatus: null,
   logs: [],
-  hoverCell: null,
+  hover: null,
+  simulatedSources: [],
   lastStatusFlags: null,
   signalRange: null,
   spadRange: null,
@@ -320,6 +325,7 @@ function resetReception(): void {
   state.scan = null;
   state.moving = null;
   state.simulated = null;
+  state.simulatedSources = [];
   state.lidarDirty = true;
   state.lectureDirty = true;
 }
@@ -357,7 +363,7 @@ const serial = new SerialConnection({
   onChunk: (chunk) => {
     receiver.push(chunk);
   },
-  onStateChange: (s: SerialState, detail?: string) => {
+  onStateChange: (s: SerialState, detail?: string, level?: DetailLevel) => {
     const labels: Record<SerialState, string> = {
       disconnected: "未接続",
       connecting: "接続中…",
@@ -370,7 +376,8 @@ const serial = new SerialConnection({
     connectedAtMs = s === "connected" ? performance.now() : null;
     noMessageWarned = false;
     if (detail !== undefined) {
-      browserLog(1, `シリアル: ${labels[s]}(${detail})`);
+      // 1 回の切断は 1 行。USB の抜去(デバイスの消失)は普通の切断なので INFO、ほかの理由は WARN
+      browserLog(level === "info" ? 0 : 1, `シリアル: ${labels[s]}(${detail})`);
     }
   },
   onWarning: (message) => {
@@ -553,24 +560,6 @@ ui.reset3d.addEventListener("click", () => {
   scene3d?.resetView();
 });
 
-for (const canvas of [ui.imgDistance, ui.imgSignal, ui.imgSpads]) {
-  canvas.addEventListener("mousemove", (e) => {
-    const side = state.latestFrame?.side ?? 8;
-    const rect = canvas.getBoundingClientRect();
-    // 表示の倍率によらず、描画の座標(GRID_PX 基準)に直す
-    const k = GRID_PX / Math.max(1, rect.width);
-    const cell = cellFromPoint((e.clientX - rect.left) * k, (e.clientY - rect.top) * k, side);
-    if (cell?.row !== state.hoverCell?.row || cell?.col !== state.hoverCell?.col) {
-      state.hoverCell = cell;
-      state.imagesDirty = true;
-    }
-  });
-  canvas.addEventListener("mouseleave", () => {
-    state.hoverCell = null;
-    state.imagesDirty = true;
-  });
-}
-
 // ---- 描画(requestAnimationFrame で最新の状態だけを描く) ----
 function fillDl(dl: HTMLDListElement, rows: readonly (readonly [string, string])[]): void {
   dl.replaceChildren(
@@ -584,16 +573,6 @@ function fillDl(dl: HTMLDListElement, rows: readonly (readonly [string, string])
   );
 }
 
-/** マウスが乗っているゾーン(セルと現在の向き・解像度から求める。範囲外なら null) */
-function hoverZone(): number | null {
-  const cell = state.hoverCell;
-  const side = state.latestFrame?.side ?? 8;
-  if (cell === null || cell.row >= side || cell.col >= side) {
-    return null;
-  }
-  return zoneAt(cell.row, cell.col, side, orientation());
-}
-
 function renderImages(): void {
   const o = orientation();
   const frame = state.latestFrame;
@@ -601,11 +580,6 @@ function renderImages(): void {
   drawDistanceImage(ctx.distance, frame, o, zone, ui.showNumbers.checked);
   drawSignalImage(ctx.signal, frame, o, zone, state.signalRange);
   drawSpadImage(ctx.spads, frame, o, zone, state.spadRange);
-  if (frame !== null && zone !== null) {
-    ui.zoneInfo.textContent = describeZone(frame, zone).join("\n");
-  } else if (zone === null) {
-    ui.zoneInfo.textContent = "画像にマウスを乗せると、そのゾーンの値を表示する";
-  }
 }
 
 function renderStats(nowMs: number): void {
@@ -703,6 +677,7 @@ function onFrameForScan(frame: RangingFrame): void {
   state.moving = motion.update(frame);
   // 解像度などが変わった直後は null(フレームがたまるまで「フレーム待ち」)
   state.simulated = scanSimulator.push(frame, o);
+  state.simulatedSources = scanSimulator.sourceSeqs;
   const scan = scanLine(frame, o, lidarBand());
   state.scan = scan;
   scanHistory.add(performance.now(), scan);
@@ -760,6 +735,7 @@ function renderLidarIfNeeded(nowMs: number): void {
     sweepAngleDeg: ui.lidarSweep.checked ? sweepAngleDeg(nowMs) : null,
     label: ui.lidarSweep.checked ? "演出あり" : null,
     pointColor: "distance",
+    highlightZone: hoverZone(),
   });
 }
 
@@ -784,12 +760,12 @@ function renderLectures(): void {
   const o = orientation();
   const frame = state.latestFrame;
   if (isVisible("lectureA")) {
-    drawSignalImage(ctx.lectureA.left, frame, o, null, state.signalRange);
-    drawSpadImage(ctx.lectureA.right, frame, o, null, state.spadRange);
+    drawSignalImage(ctx.lectureA.left, frame, o, hoverZone(), state.signalRange);
+    drawSpadImage(ctx.lectureA.right, frame, o, hoverZone(), state.spadRange);
   }
   if (isVisible("lectureB")) {
-    drawDistanceImage(ctx.lectureB.left, frame, o, null, false);
-    drawDistanceImage(ctx.lectureB.right, state.simulated, o, null, false);
+    drawDistanceImage(ctx.lectureB.left, frame, o, hoverZone(), false);
+    drawDistanceImage(ctx.lectureB.right, state.simulated, o, hoverZone(), false);
     // 模擬であることを図の上に明記する(座標は GRID_PX 基準)
     const c = ctx.lectureB.right;
     c.save();
@@ -818,6 +794,7 @@ function renderLectures(): void {
         sweepAngleDeg: null,
         label: null,
         pointColor: "distance",
+        highlightZone: hoverZone(),
       });
     }
   }
@@ -1169,6 +1146,252 @@ loadDemoManifest()
     browserLog(2, `デモの一覧を読めない: ${String(e)}`);
   });
 
+// ---- ゾーンの値のツールチップ(マウスを乗せる) ----
+/** マウスを乗せられる図 */
+type HoverTarget =
+  | "imgDistance"
+  | "imgSignal"
+  | "imgSpads"
+  | "lectureALeft"
+  | "lectureARight"
+  | "lectureBLeft"
+  | "lectureBRight"
+  | "lidar"
+  | "lectureCLeft"
+  | "lectureCRight";
+
+/** マウスが乗っている図と位置 */
+interface HoverState {
+  readonly target: HoverTarget;
+  /** 図の描画の座標での位置(8x8 画像は GRID_PX 基準、扇形は CSS px) */
+  readonly x: number;
+  readonly y: number;
+  /** ビューポート座標(ツールチップの位置) */
+  readonly clientX: number;
+  readonly clientY: number;
+}
+
+/** 8x8 画像の図 */
+interface GridHover {
+  readonly kind: "grid";
+  readonly canvas: HTMLCanvasElement;
+  readonly title: string;
+  /** 値を取るフレーム */
+  readonly frame: () => RangingFrame | null;
+  /** 補足の行 */
+  readonly extra?: (zone: number) => string[];
+}
+
+/** 真上から見た扇形の図 */
+interface TopHover {
+  readonly kind: "top";
+  readonly canvas: HTMLCanvasElement;
+  readonly title: string;
+  readonly model: DistanceModel;
+  readonly size: () => { readonly width: number; readonly height: number };
+  /** 「背景から動いた」をツールチップに出すか(動きの強調を描いている LiDAR 風ビューだけ) */
+  readonly showsMotion: boolean;
+}
+
+/** 走査型の模擬の図で、ゾーンの値がどのフレームのものか */
+function simulatedSourceLines(zone: number): string[] {
+  const frame = state.simulated;
+  if (frame === null) return [];
+  const lag = scanLagFrames(zone, frame.side, orientation());
+  const seq = state.simulatedSources[frame.side - 1 - lag];
+  const seqText = seq === undefined ? "" : `(seq ${seq})`;
+  return [
+    lag === 0
+      ? `模擬: この列は最新のフレームの値${seqText}`
+      : `模擬: この列は ${lag} フレーム前の値${seqText}`,
+  ];
+}
+
+const HOVER_TARGETS: Readonly<Record<HoverTarget, GridHover | TopHover>> = {
+  imgDistance: {
+    kind: "grid",
+    canvas: ui.imgDistance,
+    title: "2D 画像: 距離",
+    frame: () => state.latestFrame,
+  },
+  imgSignal: {
+    kind: "grid",
+    canvas: ui.imgSignal,
+    title: "2D 画像: signal_per_spad",
+    frame: () => state.latestFrame,
+  },
+  imgSpads: {
+    kind: "grid",
+    canvas: ui.imgSpads,
+    title: "2D 画像: nb_spads_enabled",
+    frame: () => state.latestFrame,
+  },
+  lectureALeft: {
+    kind: "grid",
+    canvas: lectureEls.A.canvasLeft,
+    title: "レクチャー A: signal_per_spad",
+    frame: () => state.latestFrame,
+  },
+  lectureARight: {
+    kind: "grid",
+    canvas: lectureEls.A.canvasRight,
+    title: "レクチャー A: nb_spads_enabled",
+    frame: () => state.latestFrame,
+  },
+  lectureBLeft: {
+    kind: "grid",
+    canvas: lectureEls.B.canvasLeft,
+    title: "レクチャー B: このセンサーの実際",
+    frame: () => state.latestFrame,
+  },
+  lectureBRight: {
+    kind: "grid",
+    canvas: lectureEls.B.canvasRight,
+    title: "レクチャー B: 走査型の模擬",
+    frame: () => state.simulated,
+    extra: simulatedSourceLines,
+  },
+  lidar: {
+    kind: "top",
+    canvas: ui.lidarCanvas,
+    title: "LiDAR 風ビュー(垂直距離として置いた図)",
+    model: "perpendicular",
+    size: () => ctx.lidarSize,
+    showsMotion: true,
+  },
+  lectureCLeft: {
+    kind: "top",
+    canvas: lectureEls.C.canvasLeft,
+    title: "レクチャー C: 垂直距離として置いた図",
+    model: "perpendicular",
+    size: () => ctx.lectureCSize,
+    showsMotion: false,
+  },
+  lectureCRight: {
+    kind: "top",
+    canvas: lectureEls.C.canvasRight,
+    title: "レクチャー C: 半径として置いた図",
+    model: "radial",
+    size: () => ctx.lectureCSize,
+    showsMotion: false,
+  },
+};
+
+/** マウスの位置が変わった・図から出た: 強調とツールチップを描き直す */
+function onHoverChanged(): void {
+  state.imagesDirty = true;
+  state.lidarDirty = true;
+  state.lectureDirty = true;
+}
+
+function isHoverTarget(v: string): v is HoverTarget {
+  return v in HOVER_TARGETS;
+}
+
+// Object.keys は string[] になるので、HOVER_TARGETS のキーであることを確かめてから使う
+for (const key of Object.keys(HOVER_TARGETS).filter(isHoverTarget)) {
+  const target = HOVER_TARGETS[key];
+  const canvas = target.canvas;
+  canvas.addEventListener("mousemove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const localX = e.clientX - rect.left;
+    const localY = e.clientY - rect.top;
+    // 8x8 画像は表示の倍率によらず描画の座標(GRID_PX 基準)に直す。扇形は CSS px のまま
+    const k = target.kind === "grid" ? GRID_PX / Math.max(1, rect.width) : 1;
+    state.hover = {
+      target: key,
+      x: localX * k,
+      y: localY * k,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    };
+    onHoverChanged();
+  });
+  canvas.addEventListener("mouseleave", () => {
+    state.hover = null;
+    onHoverChanged();
+  });
+}
+
+/**
+ * マウスが乗っているゾーン。8x8 画像はカーソルの下のゾーン、扇形はカーソルに最も近い点(PICK_RADIUS_PX 以内)。
+ * 現在の向き・データ・図の大きさで毎回求め直す。乗っていなければ null
+ */
+function hoverZone(): number | null {
+  const hover = state.hover;
+  if (hover === null) return null;
+  const target = HOVER_TARGETS[hover.target];
+  if (target.kind === "grid") {
+    const side = target.frame()?.side ?? state.latestFrame?.side ?? 8;
+    const cell = cellFromPoint(hover.x, hover.y, side);
+    return cell === null ? null : zoneAt(cell.row, cell.col, side, orientation());
+  }
+  const frame = state.latestFrame;
+  if (frame === null) return null;
+  const { width, height } = target.size();
+  const maxRange = lidarMaxRangeMm();
+  const picked = pickNearestPoint(
+    projectTop(frame, orientation(), target.model),
+    topViewLayout(width, height, maxRange),
+    hover.x,
+    hover.y,
+    maxRange,
+  );
+  return picked?.zone ?? null;
+}
+
+/** ツールチップの文言(乗っていない・ゾーンがなければ null) */
+function tooltipText(): string | null {
+  const hover = state.hover;
+  const zone = hoverZone();
+  if (hover === null || zone === null) return null;
+  const target = HOVER_TARGETS[hover.target];
+  if (target.kind === "grid") {
+    return tooltipLines(target.title, target.frame(), zone, target.extra?.(zone) ?? []).join("\n");
+  }
+  const frame = state.latestFrame;
+  const p =
+    frame === null
+      ? undefined
+      : projectTop(frame, orientation(), target.model).find((q) => q.zone === zone);
+  const extra: string[] = [];
+  if (p !== undefined) {
+    extra.push(
+      `真上から見た位置: 右 ${Math.round(p.x)} mm、前方 ${Math.round(p.z)} mm(x はセンサーから見て右が正)`,
+    );
+  }
+  if (target.showsMotion && ui.lidarMotion.checked && state.moving !== null) {
+    extra.push(`背景から動いた: ${state.moving[zone] === true ? "はい" : "いいえ"}`);
+  }
+  return tooltipLines(target.title, frame, zone, extra).join("\n");
+}
+
+/** ツールチップを出す・動かす・消す。requestAnimationFrame の中から呼ぶ */
+function renderTooltip(): void {
+  const tip = ui.zoneTooltip;
+  const hover = state.hover;
+  const text = tooltipText();
+  if (hover === null || text === null) {
+    tip.hidden = true;
+    return;
+  }
+  if (tip.textContent !== text) {
+    tip.textContent = text;
+  }
+  tip.hidden = false;
+  const rect = tip.getBoundingClientRect();
+  const { left, top } = placeTooltip(
+    hover.clientX,
+    hover.clientY,
+    rect.width,
+    rect.height,
+    window.innerWidth,
+    window.innerHeight,
+  );
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+}
+
 let lastStatsMs = 0;
 function tick(nowMs: number): void {
   // プレゼンの表示で見えていないビューは描かない(dirty は残し、見えたときに描く)
@@ -1193,6 +1416,9 @@ function tick(nowMs: number): void {
     renderLogs();
   }
   renderLidarIfNeeded(nowMs);
+  if (state.hover !== null || !ui.zoneTooltip.hidden) {
+    renderTooltip();
+  }
   if (state.lectureDirty) {
     state.lectureDirty = false;
     renderLectures();

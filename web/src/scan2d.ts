@@ -359,6 +359,15 @@ export class ScanSimulator {
   private frames: RangingFrame[] = [];
 
   /**
+   * 最後に作った合成フレームの、センサーから見た列ごとの元のフレームの seq(左端の列から。まだなければ空)。
+   * マウスを乗せたゾーンが「どのフレームから取った値か」を表示するのに使う
+   */
+  get sourceSeqs(): readonly number[] {
+    const side = this.frames[this.frames.length - 1]?.side ?? 0;
+    return this.frames.length === side ? this.frames.map((f) => f.seq) : [];
+  }
+
+  /**
    * フレームを追加し、合成フレームを返す。
    *
    * @param frame - 新しい測距フレーム
@@ -389,6 +398,16 @@ export class ScanSimulator {
   reset(): void {
     this.frames = [];
   }
+}
+
+/**
+ * 走査型の模擬で、ゾーンの値を何フレーム前のフレームから取っているか
+ * (センサーから見て左端の列が side − 1 フレーム前、右端の列が 0 = 最新)。
+ *
+ * @throws RangeError zone や side が範囲外のとき
+ */
+export function scanLagFrames(zone: number, side: number, orientation: Orientation): number {
+  return side - 1 - sensorColumn(zone, side, orientation);
 }
 
 /**

@@ -201,8 +201,21 @@
 
       <section class="panels">
         <div class="panel">
-          <h2>ゾーン</h2>
-          <pre id="zone-info">画像にマウスを乗せると、そのゾーンの値を表示する</pre>
+          <h2>ゾーンの値(マウスを乗せる)</h2>
+          <p class="note">
+            次の図にマウスを乗せると、カーソルのそばにそのゾーンの全フィールドの値が出る(全画面でも出る)。乗せたゾーンは、ほかの図でも白い枠で示す。
+          </p>
+          <ul class="note">
+            <li>
+              2D 画像(距離・IR・SPAD 数)、レクチャー A・B の 8x8 画像:
+              カーソルの下のゾーン。レクチャー B の模擬の図では、何フレーム前の値かも出る
+            </li>
+            <li>
+              LiDAR 風ビュー、レクチャー C の扇形: カーソルに最も近い点(12 px
+              以内)。真上から見た位置と、垂直距離 / 半径のどちらの図かも出る
+            </li>
+            <li>3D 点群は対象外</li>
+          </ul>
         </div>
         <div class="panel">
           <h2>受信</h2>
@@ -220,6 +233,7 @@
       </section>
     </main>
     <p class="present-footer" id="present-footer"></p>
+    <div class="zone-tooltip" id="zone-tooltip" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

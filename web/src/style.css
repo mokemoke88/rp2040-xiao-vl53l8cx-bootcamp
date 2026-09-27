@@ -237,3 +237,23 @@ body.presenting .images.view.active {
   flex-wrap: nowrap;
   align-items: flex-start;
 }
+
+/* ゾーンの値のツールチップ(カーソルのそば。全画面でも出す) */
+.zone-tooltip {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  max-width: 360px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(13, 13, 13, 0.92);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.zone-tooltip[hidden] {
+  display: none;
+}

@@ -25,6 +25,8 @@ export interface TopViewData {
   readonly label: string | null;
   /** 点の色: 距離の色か、単色か */
   readonly pointColor: "distance" | "plain";
+  /** 枠で強調するゾーン(マウスが乗っているゾーン。null なら強調しない) */
+  readonly highlightZone: number | null;
 }
 
 const SURFACE = "#1a1a19";
@@ -38,14 +40,21 @@ const RING_STEP_MM = 500;
 const HALF_FOV_RAD = ((FOV_DEG / 2) * Math.PI) / 180;
 
 /** 真上から見た図の座標変換 */
-interface Frame2D {
+export interface Frame2D {
   readonly cx: number;
   readonly cy: number;
   /** [px / mm] */
   readonly scale: number;
 }
 
-function layout(width: number, height: number, maxRangeMm: number): Frame2D {
+/**
+ * 真上から見た図の座標変換を、canvas の大きさと最大距離から決める(描画とマウスの当たり判定で共通)。
+ *
+ * @param width - 幅 [CSS px]
+ * @param height - 高さ [CSS px]
+ * @param maxRangeMm - 表示する最大距離 [mm]
+ */
+export function topViewLayout(width: number, height: number, maxRangeMm: number): Frame2D {
   const top = 28;
   const bottom = 24;
   const scaleByHeight = (height - top - bottom) / maxRangeMm;
@@ -58,7 +67,8 @@ function layout(width: number, height: number, maxRangeMm: number): Frame2D {
   };
 }
 
-function toScreen(f: Frame2D, x: number, z: number): [number, number] {
+/** 真上から見た位置 [mm](x = センサーから見て右、z = 前方)を canvas の座標 [CSS px] にする */
+export function toScreen(f: Frame2D, x: number, z: number): [number, number] {
   return [f.cx + x * f.scale, f.cy - z * f.scale];
 }
 
@@ -81,7 +91,7 @@ export function drawTopView(
   height: number,
   data: TopViewData,
 ): void {
-  const f = layout(width, height, data.maxRangeMm);
+  const f = topViewLayout(width, height, data.maxRangeMm);
   ctx.save();
   ctx.fillStyle = SURFACE;
   ctx.fillRect(0, 0, width, height);
@@ -180,6 +190,19 @@ export function drawTopView(
     }
   }
 
+  // マウスが乗っているゾーン
+  if (data.highlightZone !== null) {
+    const p = data.points.find((q) => q.zone === data.highlightZone);
+    if (p?.cls === "ok" && p.z <= data.maxRangeMm) {
+      const [sx, sy] = toScreen(f, p.x, p.z);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
   // センサー
   ctx.fillStyle = "#cccccc";
   ctx.fillRect(f.cx - 6, f.cy - 3, 12, 6);
@@ -229,4 +252,40 @@ export function sweepAngleDeg(nowMs: number, periodMs = 2000): number {
   const phase = (nowMs % periodMs) / periodMs; // 0〜1
   const tri = phase < 0.5 ? phase * 2 : 2 - phase * 2; // 0 → 1 → 0
   return -FOV_DEG / 2 + tri * FOV_DEG;
+}
+
+/** マウスの当たり判定の半径 [CSS px](これより遠ければ、どの点も選ばない) */
+export const PICK_RADIUS_PX = 12;
+
+/**
+ * canvas 上の位置に最も近い点を選ぶ(描いている点、つまり有効で最大距離以内の点だけが対象)。
+ *
+ * @param points - 真上から見た点
+ * @param f - 座標変換(topViewLayout)
+ * @param px - canvas 上の x [CSS px]
+ * @param py - canvas 上の y [CSS px]
+ * @param maxRangeMm - 表示している最大距離 [mm]
+ * @param radiusPx - 当たり判定の半径 [CSS px]
+ * @returns 最も近い点。半径より近い点がなければ null(同じ距離なら先にある点)
+ */
+export function pickNearestPoint(
+  points: readonly TopPoint[],
+  f: Frame2D,
+  px: number,
+  py: number,
+  maxRangeMm: number,
+  radiusPx: number = PICK_RADIUS_PX,
+): TopPoint | null {
+  let best: TopPoint | null = null;
+  let bestDist = radiusPx;
+  for (const p of points) {
+    if (p.cls !== "ok" || p.z > maxRangeMm) continue;
+    const [sx, sy] = toScreen(f, p.x, p.z);
+    const dist = Math.hypot(sx - px, sy - py);
+    if (dist <= bestDist && (best === null || dist < bestDist)) {
+      best = p;
+      bestDist = dist;
+    }
+  }
+  return best;
 }

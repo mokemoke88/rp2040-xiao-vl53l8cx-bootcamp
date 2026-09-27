@@ -15,9 +15,27 @@ export interface SerialCallbacks {
   /** 受信したチャンク(任意の位置で分割されている)を渡す */
   readonly onChunk: (chunk: Uint8Array) => void;
   /** 状態が変わったときに呼ぶ。detail は理由(エラーの説明など) */
-  readonly onStateChange: (state: SerialState, detail?: string) => void;
+  /**
+   * 状態が変わったときに呼ぶ。detail は理由、level はその重さ(USB の抜去によるデバイスの消失は "info"、
+   * それ以外の理由は "warning")。1 回の切断で呼ぶのは 1 回(読み取りエラーと切断を別々に知らせない)
+   */
+  readonly onStateChange: (state: SerialState, detail?: string, level?: DetailLevel) => void;
   /** 接続を続けられるエラー(バッファあふれ等)を知らせる */
   readonly onWarning: (message: string) => void;
+}
+
+/** 状態の理由の重さ */
+export type DetailLevel = "info" | "warning";
+
+/** デバイスが外れたときの理由の文 */
+export const DEVICE_LOST_DETAIL = "デバイスが外れた(USB の抜去など)";
+
+/**
+ * 読み取りの失敗がデバイスの消失(USB の抜去など)によるものか。
+ * Web Serial は、デバイスが消えると読み取りを NetworkError(Chrome の文は "The device has been lost.")で失敗させる
+ */
+export function isDeviceLost(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "NetworkError";
 }
 
 /** 1 文字コマンド(docs/frame-format.md の「モードの切り替え」) */
@@ -60,6 +78,14 @@ async function withTimeout(
   }
 }
 
+/**
+ * ポートがまだ読めるか(続けられるエラーの後は readable が新しいストリームに差し替わり、続けられないエラーの後は null)。
+ * 読み取りの await の間に変わるので、TypeScript の絞り込みが古い値のままにならないよう関数越しに読む
+ */
+function hasReadable(port: SerialPort): boolean {
+  return port.readable !== null;
+}
+
 function describeError(e: unknown): string {
   if (e instanceof Error) {
     return `${e.name}: ${e.message}`;
@@ -79,10 +105,6 @@ export class SerialConnection {
   private writesInFlight = 0;
   private currentState: SerialState = "disconnected";
   private readonly callbacks: SerialCallbacks;
-  private readonly onPortDisconnect = (): void => {
-    // USB の抜去。読み取りループは reader.read() の失敗で抜けるので、ここでは知らせるだけ
-    this.callbacks.onWarning("デバイスが取り外された");
-  };
 
   constructor(callbacks: SerialCallbacks) {
     this.callbacks = callbacks;
@@ -93,12 +115,12 @@ export class SerialConnection {
     return this.currentState;
   }
 
-  private setState(state: SerialState, detail?: string): void {
+  private setState(state: SerialState, detail?: string, level: DetailLevel = "warning"): void {
     this.currentState = state;
     if (detail === undefined) {
       this.callbacks.onStateChange(state);
     } else {
-      this.callbacks.onStateChange(state, detail);
+      this.callbacks.onStateChange(state, detail, level);
     }
   }
 
@@ -135,7 +157,6 @@ export class SerialConnection {
     }
     this.port = port;
     this.closing = false;
-    port.addEventListener("disconnect", this.onPortDisconnect);
     this.setState("connected");
     this.readLoop = this.runReadLoop(port);
     // 読み取りを始めてから 'b' を送る(ファームウェアは 0x00 → 状態 → 測距フレームの順に送る)
@@ -227,9 +248,11 @@ export class SerialConnection {
    */
   private async runReadLoop(port: SerialPort): Promise<void> {
     let detail: string | undefined;
+    let level: DetailLevel = "warning";
     while (port.readable !== null && !this.isClosing()) {
       const reader = port.readable.getReader();
       this.reader = reader;
+      let error: unknown = null;
       try {
         for (;;) {
           const { value, done } = await reader.read();
@@ -239,20 +262,36 @@ export class SerialConnection {
           this.callbacks.onChunk(value);
         }
       } catch (e) {
-        if (!this.isClosing()) {
-          detail = describeError(e);
-          this.callbacks.onWarning(`読み取りエラー(${detail})`);
-        }
+        error = e;
       } finally {
         reader.releaseLock();
         this.reader = null;
       }
+      if (error === null || this.isClosing()) {
+        continue;
+      }
+      if (isDeviceLost(error)) {
+        // 抜去は利用者にとって普通の切断なので、警告ではなく情報として、切断の 1 行で知らせる
+        detail = DEVICE_LOST_DETAIL;
+        level = "info";
+      } else {
+        detail = `読み取りエラー(${describeError(error)})`;
+        level = "warning";
+        if (hasReadable(port)) {
+          // 続けられるエラー(バッファあふれ等)。readable が新しいストリームに差し替わり、接続は続くので、ここで知らせる
+          this.callbacks.onWarning(detail);
+          detail = undefined;
+        }
+      }
     }
-    await this.closePort(port, this.isClosing() ? undefined : (detail ?? "ポートが閉じた"));
+    await this.closePort(port, this.isClosing() ? undefined : (detail ?? "ポートが閉じた"), level);
   }
 
-  private async closePort(port: SerialPort, detail: string | undefined): Promise<void> {
-    port.removeEventListener("disconnect", this.onPortDisconnect);
+  private async closePort(
+    port: SerialPort,
+    detail: string | undefined,
+    level: DetailLevel = "warning",
+  ): Promise<void> {
     await this.commandChain;
     // タイムアウトして送れていない書き込みがあると close がそれを待つので、先に捨てる。
     // 送れた後に abort すると送信バッファの 't' を捨てかねないので、残っているときだけにする
@@ -261,17 +300,20 @@ export class SerialConnection {
       await withTimeout(writable.abort(), CLOSE_TIMEOUT_MS);
     }
     let closeDetail = detail;
+    let closeLevel = level;
     const closed = await withTimeout(port.close(), CLOSE_TIMEOUT_MS);
     if (closed.kind === "timeout") {
       // 閉じ終わっていない可能性がある。同じポートに再接続すると open が InvalidStateError になりうる
       closeDetail = `ポートを閉じる処理が ${CLOSE_TIMEOUT_MS} ms で終わらなかった`;
-    } else if (closed.kind === "error") {
-      // 抜去後などは close が失敗することがある。状態は disconnected にする
-      closeDetail ??= `ポートを閉じられない(${describeError(closed.error)})`;
+      closeLevel = "warning";
+    } else if (closed.kind === "error" && closeDetail === undefined) {
+      // 抜去後などは close が失敗することがある(その場合は抜去の理由をそのまま使う)。状態は disconnected にする
+      closeDetail = `ポートを閉じられない(${describeError(closed.error)})`;
+      closeLevel = "warning";
     }
     this.port = null;
     this.readLoop = null;
     this.closing = false;
-    this.setState("disconnected", closeDetail);
+    this.setState("disconnected", closeDetail, closeLevel);
   }
 }

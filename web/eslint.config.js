@@ -17,6 +17,8 @@ const pureModules = [
   "src/scan2d.ts",
   "src/demos.ts",
   "src/lecture/text.ts",
+  "src/lidarView.ts",
+  "src/tooltip.ts",
 ];
 
 export default defineConfig(
