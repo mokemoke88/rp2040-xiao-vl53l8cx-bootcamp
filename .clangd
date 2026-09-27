@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+# clangd(エディタの補完・診断)用の設定。
+# ファームウェアのコンパイル DB は make firmware で build/compile_commands.json に生成される。
+#
+# arm-none-eabi-gcc の標準ヘッダ(assert.h など)を clangd に見つけさせるには、エディタ側で clangd の起動引数に
+# --query-driver=<arm-none-eabi-gcc のパス>* を追加する(.clangd では指定できない)。
+CompileFlags:
+  CompilationDatabase: build
+---
+# tests/ のホスト用テストはコンパイル DB に含まれず、src/ のコマンドから推測される。
+# 推測されたコマンドの作業ディレクトリは build/ なので、そこからの相対パスで Unity を足す。
+If:
+  PathMatch: tests/.*
+CompileFlags:
+  Add: [-I../third_party/unity]
