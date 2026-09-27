@@ -5,7 +5,7 @@ C の実装(src/frame_proto.c)ともテストベクタの生成スクリプト(t
 デコーダ。CRC-32 は標準ライブラリの zlib.crc32 を使う。起動時にまず docs/frame-vectors.json で自己検査し、
 一致しなければ記録のデコードはしない。
 
-使い方(ワークスペース直下で):
+使い方(リポジトリ直下で):
     python tools/verification/decode_capture.py capture.bin           # 自己検査 + デコードと統計
     python tools/verification/decode_capture.py capture.bin --show 3  # 先頭 3 フレームの中身も出す
     python tools/verification/decode_capture.py --self-test           # 自己検査だけ(make test で使う)

@@ -6,9 +6,9 @@
 3. --seconds 秒のあいだ受信したバイト列を記録する
 4. 記録を止めてから 't' を送ってテキスト表示に戻す(--keep-binary で送らない)
 
-記録は tools/verification/decode_capture.py でデコードできる。pyserial が要る(リポジトリルートの .venv に入っている)。
+記録は tools/verification/decode_capture.py でデコードできる。pyserial が要る(pip install -r requirements.txt)。
 
-例(ワークスペース直下で):
+例(リポジトリ直下で):
     python tools/capture_serial.py --port COM7 --seconds 5 --out capture.bin
 """
 

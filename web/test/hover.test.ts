@@ -36,7 +36,7 @@ describe("pickNearestPoint", () => {
   });
 
   it("returns null beyond the radius and accepts the radius itself", () => {
-    expect(PICK_RADIUS_PX).toBe(12); // 画面と README の説明(12 px 以内)と同じ値
+    expect(PICK_RADIUS_PX).toBe(12); // 画面と docs/usage.md の説明(12 px 以内)と同じ値
     const [px, py] = at(0, 2000);
     expect(pickNearestPoint(pts, f, px + PICK_RADIUS_PX, py, 3000)?.zone).toBe(3);
     expect(pickNearestPoint(pts, f, px + PICK_RADIUS_PX + 0.5, py, 3000)).toBeNull();

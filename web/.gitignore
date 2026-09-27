@@ -23,6 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# テストとデモの記録ファイルは管理する(ワークスペース直下の .gitignore が *.bin を除外しているため)
+# テストとデモの記録ファイルは管理する(リポジトリ直下の .gitignore が *.bin を除外しているため)
 !test/fixtures/*.bin
 !public/demos/*.bin

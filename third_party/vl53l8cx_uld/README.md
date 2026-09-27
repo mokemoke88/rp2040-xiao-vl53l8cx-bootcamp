@@ -20,4 +20,4 @@ ST の VL53L8CX Ultra Lite Driver。このディレクトリのファイルは�
 
 **`vl53l8cx_api.c` を差し替えた理由**: アーカイブ直下の `VL53L8CX_ULD_API/src/vl53l8cx_api.c` は 368 行目(ファームウェアのチェックサム不一致時)が `goto exit` でセミコロンが抜けており、コンパイルできない。同じアーカイブの CubeIDE サンプル同梱版はこの 1 文字だけが異なり、ST の GitHub(`STMicroelectronics/x-cube-tof1` の `Drivers/BSP/Components/vl53l8cx/modules/`)の版とも一致する。ほかのファイルはアーカイブ直下と GitHub 版で同一。
 
-プラットフォーム層(`VL53L8CX_RdByte` / `WrByte` / `RdMulti` / `WrMulti` / `WaitMs` / `SwapBuffer` / `Reset_Sensor`)はパッケージのひな形を使わず、ワークスペース側で RP2040 向けに実装する。
+プラットフォーム層(`VL53L8CX_RdByte` / `WrByte` / `RdMulti` / `WrMulti` / `WaitMs` / `SwapBuffer` / `Reset_Sensor`)はパッケージのひな形を使わず、このリポジトリの `src/platform.c` で RP2040 向けに実装する。

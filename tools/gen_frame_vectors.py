@@ -9,7 +9,7 @@ C の実装(src/frame_proto.c)とは別に、仕様書どおりのエンコー�
 C のテストは、同じ入力から C の実装で組み立てたバイト列がここの期待値と一致することを検査する。
 つまり C と Python の 2 つの独立した実装が一致することを確かめている。
 
-使い方(ワークスペース直下で):
+使い方(リポジトリ直下で):
     python tools/gen_frame_vectors.py          # 2 つのファイルを書き直す
     python tools/gen_frame_vectors.py --check  # 書き直した内容が今のファイルと同じか確かめる(make test で使う)
 """

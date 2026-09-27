@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# README の「読み出し時間の見積もり」の検算: vl53l8cx_get_ranging_data が 1 フレームで I2C から読む
+# docs/design-notes.md の「設計メモ(Step 2)」「設計メモ(Step 3)」の読み出し時間の見積もりの検算: vl53l8cx_get_ranging_data が 1 フレームで I2C から読む
 # バイト数(ULD の data_read_size)と、その I2C 転送にかかる時間を計算する。
 # data_read_size の計算は third_party/vl53l8cx_uld/src/vl53l8cx_api.c の vl53l8cx_start_ranging と同じ。
 # ブロックヘッダの値は vl53l8cx_api.h(VL53L8CX_NB_TARGET_PER_ZONE == 1 の場合)、有効な出力は include/platform.h。
