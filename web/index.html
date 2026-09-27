@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VL53L8CX ヒートマップ</title>
+  </head>
+  <body>
+    <header>
+      <h1>VL53L8CX ヒートマップ(XIAO RP2040)</h1>
+      <div class="controls">
+        <fieldset>
+          <legend>シリアル</legend>
+          <button id="connect" type="button">接続</button>
+          <button id="disconnect" type="button" disabled>切断</button>
+          <span id="connection">未接続</span>
+        </fieldset>
+        <fieldset>
+          <legend>記録ファイルの再生</legend>
+          <input id="replay-file" type="file" />
+          <label
+            >時間
+            <select id="replay-timing">
+              <option value="timestamp">記録時のタイムスタンプ</option>
+              <option value="fixed">一定(15 fps)</option>
+            </select>
+          </label>
+          <label
+            >速度
+            <select id="replay-speed">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select>
+          </label>
+          <label><input id="replay-loop" type="checkbox" /> 繰り返す</label>
+          <button id="replay-play" type="button" disabled>再生</button>
+          <button id="replay-pause" type="button" disabled>一時停止</button>
+          <button id="replay-stop" type="button" disabled>停止</button>
+          <span id="replay-progress"></span>
+        </fieldset>
+        <fieldset>
+          <legend>表示</legend>
+          <label><input id="flip-h" type="checkbox" checked /> 左右反転</label>
+          <label><input id="flip-v" type="checkbox" /> 上下反転</label>
+          <label><input id="show-numbers" type="checkbox" /> 距離の数値</label>
+        </fieldset>
+      </div>
+    </header>
+
+    <main>
+      <p class="note">
+        h=1 v=0(既定)のとき、センサーを正面から見て 9
+        ピン列を左にした見た目になる。状態メッセージを受け取ると、その
+        flags(ファームウェアの反転)に合わせる。
+      </p>
+      <section class="images">
+        <figure>
+          <figcaption>距離</figcaption>
+          <canvas id="img-distance"></canvas>
+        </figure>
+        <figure>
+          <figcaption>signal_per_spad(IR 画像)</figcaption>
+          <canvas id="img-signal"></canvas>
+        </figure>
+        <figure>
+          <figcaption>nb_spads_enabled</figcaption>
+          <canvas id="img-spads"></canvas>
+        </figure>
+      </section>
+
+      <section class="panels">
+        <div class="panel">
+          <h2>ゾーン</h2>
+          <pre id="zone-info">画像にマウスを乗せると、そのゾーンの値を表示する</pre>
+        </div>
+        <div class="panel">
+          <h2>受信</h2>
+          <dl id="stats"></dl>
+        </div>
+        <div class="panel">
+          <h2>状態メッセージ</h2>
+          <dl id="status"></dl>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>ログ</h2>
+        <ol id="logs"></ol>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

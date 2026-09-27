@@ -42,13 +42,13 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 |---|---|---|---|
 | 1. 測距 | ULD ドライバを移植し、4x4 の距離を USB シリアルに printf | 配線、I2C、ULD のプラットフォーム層、センサーへのファームウェア転送 | 完了(2026-09-27。ゾーンの向きの確認は Step 2 に持ち越し) |
 | 2. 距離画像 | 8x8 / 15 Hz にし、測距ステータスと sigma で無効ゾーンを除く。ターミナルに文字でヒートマップを出す | 解像度とレートの関係、測距データの信頼性 | 完了(2026-09-27) |
-| 3. PC ヒートマップ | フレームをバイナリで送り(COBS + CRC-32。形式は [docs/frame-format.md](docs/frame-format.md))、ブラウザでリアルタイムにヒートマップ表示(距離と signal_per_spad の「IR 画像」) | シリアルのフレーム設計、Web Serial | 進行中(形式の仕様・テストベクタ・ファームウェアは実装済み・実機未確認。ブラウザ側は未着手) |
+| 3. PC ヒートマップ | フレームをバイナリで送り(COBS + CRC-32。形式は [docs/frame-format.md](docs/frame-format.md))、ブラウザでリアルタイムにヒートマップ表示(距離と signal_per_spad の「IR 画像」) | シリアルのフレーム設計、Web Serial | 進行中(形式の仕様・テストベクタ・ファームウェアは実装済み・実機未確認。ブラウザ側(`web/`。下記「ブラウザで表示する」)は実装済み・ブラウザでの確認は未実施) |
 | 4. 点群 | ゾーンの方向と距離から XYZ に変換し、three.js で 3D 点群表示(視点を回せる) | ToF の幾何(画角とゾーン中心の方向) | 未着手 |
 | 5. 最終デモ | 「LiDAR 風ビュー」: 3D 点群 + 真上から見た扇形の 2D スキャン表示(列ごとの最近距離)+ 残像 + 動いたものの強調 | まとめ | 未着手 |
 
 ## 未決事項
 
-- ブラウザ側の構成(ビルドなしの素の ES Modules か、バンドラを使うか)と、それに対応する開発規約。`rules/develop/` に該当するものがまだない
+- なし(ブラウザ側の構成は Step 3 で決定: Vite + TypeScript、UI フレームワークなし。開発規約は `rules/develop/typescript-vite.md`)
 
 ## 対象と開発環境
 
@@ -58,6 +58,7 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
   - `pico-sdk-windows-toolchain-sources`
   - `xiao-rp2040-pico-sdk-notes`
 - 開発規約(ファームウェア): `rules/develop/c.md` + `rules/develop/c-pico-sdk.md`
+- 開発規約(ブラウザ、`web/`): `rules/develop/typescript-vite.md`(Vite の概要はリポジトリの `docs/vite-overview.md`)
 - ホストでテストできるロジック(フレームのエンコード、CRC、ゾーン → XYZ 変換など)は SDK に依存させず、Unity でテストする
 
 ## ドキュメント
@@ -76,6 +77,7 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 
 - ファームウェア: `PICO_SDK_PATH`(Pico SDK 2.3.1)、Arm GNU Toolchain(`arm-none-eabi-gcc`)、CMake、Ninja。picotool はビルド済みのものを `picotool_DIR` で指定しておく
 - ホスト側のテスト・整形: `gcc`、`make`(Windows では w64devkit で確認)、`clang-format`
+- ブラウザアプリ(`web/`): Node.js(v24 で確認)と npm。表示には Chrome または Edge(Web Serial は Chromium 系のみ)
 - Python 3(`make test` がテストベクタの確認とデコーダの自己検査に使う)。記録ツールは pyserial が要る(リポジトリルートの `.venv` に入っている。`make` の `PYTHON` 変数で別の python を指定できる)
 
 ### コマンド
@@ -164,6 +166,64 @@ sigma of status-ok zones: median 19 max 80 limit 50 | keys h v c ?
 - 初期化に失敗すると赤 LED が点き、`FAILED: <処理> status=<値> (last_i2c_error=..., i2c_error_count=...)` を 2 秒ごとに表示し続ける。測距が始まると緑 LED が点く
 - 起動時のログ(`I2C bus recovery`、`I2C1 ... Hz`、`sensor alive`、`init done in ... ms`、`ranging 8x8 @ 15 Hz, N bytes per frame`)は Step 1 と同じ。`I2C1 ... Hz` は既定の clk_sys 125 MHz で 399361 Hz(SDK の i2c_set_baudrate の計算: period = (125000000 + 200000) / 400000 = 313 クロック、125000000 / 313 = 399361)。`N bytes per frame` は Step 3 で signal_per_spad と nb_spads_enabled を足したので 8x8 で 972 の見込み(下記「設計メモ(Step 3)」。上の例の 452 は Step 2 の値)
 
+### ブラウザで表示する(web/、Step 3)
+
+`web/` は Vite + TypeScript のブラウザアプリ。Web Serial で XIAO につなぎ、測距フレームを 3 つの 8x8 画像で表示する。規約は `rules/develop/typescript-vite.md`。
+
+#### 起動
+
+`web/` で次を実行する(初回だけ `npm install`)。
+
+```
+npm install
+npm run dev
+```
+
+Chrome または Edge で **http://localhost:5173/** を開く。Web Serial は Chromium 系のブラウザで、secure context(https または localhost)でしか使えない。`npm run dev -- --host` で別の端末から `http://192.168.x.x:5173/` として開いた場合は接続できない(記録ファイルの再生は使える)。
+
+| コマンド(`web/` で実行) | 内容 |
+|---|---|
+| `npm run dev` | 開発サーバー(http://localhost:5173/) |
+| `npm run build` | 型チェックの後、`web/dist/` に静的ファイルを出力 |
+| `npm run preview` | `dist/` をローカルで配って確認 |
+| `npm run format` / `format:check` | Prettier で整形 / 整形済みか検査 |
+| `npm run lint` | ESLint(typescript-eslint の型情報付きの規則) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Vitest(`docs/frame-vectors.json` を読んで COBS・CRC・メッセージ・拒否・ストリームの統計を検査) |
+
+コードを変更したら `npm run format` → `lint` → `typecheck` → `test` → `build` を 1 つずつ実行し、警告なし・全 PASS を確認する。
+
+依存(すべて devDependencies): vite(開発サーバーとビルド)、typescript(`~6.0.2` に固定。typescript-eslint 8.x が 6.1 未満までしか対応しないため)、vitest(テスト)、eslint・@eslint/js・typescript-eslint(lint)、prettier(整形)、@types/w3c-web-serial(Web Serial の型)。
+
+#### 接続
+
+1. XIAO を USB でつなぐ(ターミナルソフトで同じ COM ポートを開いていたら閉じる。ポートは 1 つのアプリしか開けない)
+2. 「接続」を押し、ダイアログで XIAO のポートを選ぶ
+3. アプリはポートを開いて DTR を立て、`b` を送ってバイナリの出力に切り替える。最初の 0x00 までに届いたもの(テキスト表示の残り)は捨てる
+4. 画像の左右・上下の反転は、データ源(接続・再生の開始)ごとの最初の状態メッセージでファームウェアの設定(既定 h=1 v=0)に合わせる。以後は画面のチェックボックスで切り替えてよい。状態メッセージが再送されても flags が前回と同じなら画面の設定は変えず、flags が変わったとき(ファームウェア側で `h` / `v` が押されたとき)だけ合わせ直す。反転が変わると、マウスが乗っている位置のゾーンの表示も求め直す
+5. 「切断」で `t` を送ってテキスト表示に戻してから閉じる。接続直後の `b` の送信中に押した場合は、`b` の送信が終わってから `t` を送る。`t` は 500 ms 以内に送れなければあきらめ、送れていない書き込みを捨ててから閉じる。ポートを閉じる処理が 1 秒で終わらない場合も未接続に戻し、その旨をログに出す。USB を抜いた場合は、読み取りエラーとして記録して未接続に戻る
+6. 接続から 3 秒たってもメッセージが来ない場合は、ログに注意を出す(ファームウェアがテキスト表示のまま、またはセンサーの初期化に失敗して止まっている。[docs/frame-format.md](docs/frame-format.md) の「モードの切り替え」)
+
+#### 画面
+
+- **距離**: 有効なゾーンは近 = 赤 → 黄 → 緑 → 遠 = 青(0〜2000 mm。Step 2 のターミナル表示と同じ考え方で、段階ではなく連続の色)。2000 mm 超は暗い紫。無効なゾーンは灰色の濃淡で、記号 `x` = ステータスが 5 / 9 以外、`?` = sigma が 50 mm 超、記号なし = ターゲットなし(判定の順も Step 2 と同じ)。「距離の数値」で有効なゾーンに mm の値を重ねる
+- **signal_per_spad(IR 画像)**: グレースケール(黒 = 弱い、白 = 強い)。値の幅が広いので対数スケールで、範囲はフレームの最小・最大(0 を除く)に自動で追従する(広がるときはすぐ、狭まるときはゆっくり)。無効なゾーンも値のまま描く
+- **nb_spads_enabled**: 青の濃淡(暗い = 少ない、明るい = 多い)。線形・自動レンジ
+- 各画像の下に単位と凡例(色の帯と範囲)。T が 2 以上のフレームは最初のターゲットを描く
+- 画像にマウスを乗せると、そのゾーンの全フィールド(全ターゲットの距離・ステータス・sigma・signal、ターゲット数、SPAD 数)を「ゾーン」の欄に出し、3 つの画像の同じゾーンを枠で示す
+- 「受信」の欄: 受信 fps(ブラウザが受け取った頻度)、送信側 fps(タイムスタンプの間隔から)、種別ごとの受信数、seq の欠落(回数と個数)・後退、測距フレームの間隔の異常(状態メッセージの頻度から求めた周期の 1.5 倍超。センサー側の取りこぼしは seq に現れないのでこれで見る)、理由別の拒否の数、捨てたバイト数、温度
+- 「状態メッセージ」の欄: ファームウェアの版、解像度、field_mask、測距の頻度、反転、I2C クロック、1 フレームの読み出しバイト数
+- 「ログ」の欄: ファームウェアのログ(種別 2)と、ブラウザ側の出来事(接続・エラー)。最新 200 件
+
+#### 記録ファイルの再生
+
+`tools/capture_serial.py` で保存したファイル(USB シリアルの生のバイト列)を「記録ファイルの再生」で選び、「再生」を押す。実機なしで表示を確かめられる。
+
+- 時間: 「記録時のタイムスタンプ」はメッセージの timestamp_us の間隔で流す(記録ファイルには受信時刻が入っていないため。間隔は 1 秒で頭打ち、時刻が戻ったところは待たない)。「一定(15 fps)」は測距フレームを 66.7 ms ごとに流す
+- 速度(0.25〜4 倍)と繰り返しを選べる(再読み込みでブラウザがフォームの値を復元した場合も、起動時と再生の開始時に画面の値を読み直す)。接続中は再生できない。再生中に「接続」を押すと再生を止める
+- 再生は実機と同じ受信処理(0x00 区切り → COBS → CRC → 形式の検査 → 統計)を通る
+- 繰り返すときは、周の継ぎ目で受信処理・統計・表示をリセットし、新しいデータ源として始め直す(リセットしないと、前の周の末尾と次の周の先頭のテキストが 1 つのパケットとしてつながって拒否され、seq も後退として数えられる)。統計は周ごとの値になる
+
 ### 実機で確認すること
 
 確認済みと書いているのは、ユーザーから報告があった範囲だけ。
@@ -175,6 +235,27 @@ sigma of status-ok zones: median 19 max 80 limit 50 | keys h v c ?
 - `tools/capture_serial.py` で `b` を送って数秒記録し、`tools/verification/decode_capture.py` で全メッセージが拒否なし・シーケンスの欠落なしでデコードでき、最初に状態メッセージ、以後 15 fps 前後の測距フレームが並ぶこと
 - バイナリの出力中に `t` でテキストに戻ること、`h` / `v` で状態メッセージが送り直されること
 - 記録を止めたまま(ホストが読まない状態で)しばらく置いた後、読み始めると回復すること(下記「ホストが読まないとき」)
+
+#### Step 3(ブラウザ)
+
+Web Serial の接続ダイアログは自動化できないので、ブラウザでの確認はすべて手で行う。確認済みと書いたもの以外は未実施。
+
+- `npm run dev` のページ(http://localhost:5173/)を Chrome / Edge で開き、「接続」でポートを選ぶと、状態メッセージの欄が埋まり、3 つの画像が 15 fps 前後で更新されること(受信 fps・送信側 fps が 15 前後、拒否 0、seq の欠落 0、間隔の異常 0)
+- DTR の扱い: 接続後にメッセージが来ること(`setSignals({ dataTerminalReady: true })` が効くか。`open()` だけで DTR が立つかは未確認)
+  - 確認済み(2026-09-27、ユーザー報告): 接続して表示が出た
+- 向き: 既定(状態メッセージの flags、h=1 v=0)で、センサーを自分に向けて 9 ピン列を左にして持ったとき、手で隠した側が画像の同じ側に出ること。チェックボックスで反転を切り替えられること。なお 2 つ目以降の状態メッセージ(同じ flags の再送は画面の設定を残し、flags が変わったときだけ合わせ直す)は、ファームウェアが `b` / `h` / `v` を受け取ったときにしか送られない。ブラウザは接続時に `b` を 1 回送るだけで `h` / `v` を送る操作がなく、接続中はポートを PuTTY と共有できないので、いまの画面ではこの経路を確かめられない
+- 距離の色(近 = 赤 → 遠 = 青、2000 mm 超の紫、無効の灰色と `x` / `?`)と「距離の数値」の切り替え
+- signal_per_spad の IR 画像: 白い紙と黒い物、手を近づけたときに明暗が変わること。自動レンジの凡例の値が妥当か
+- nb_spads_enabled: ゾーンや対象によって値が変わるか(変わらない場合は画像が一様になる。[docs/frame-format.md](docs/frame-format.md) ではこの挙動は未確認としている)
+- マウスを乗せたゾーンの値の表示と、3 つの画像の枠の位置が一致すること
+- 「切断」でテキスト表示に戻ること(切断後に PuTTY で開いてターミナルの表示が出る)
+  - 確認済み(2026-09-27、ユーザー報告。このときの実装は切断処理のタイムアウト追加前)
+- 接続直後(状態メッセージが出る前)にすぐ「切断」を押しても、テキスト表示に戻ること
+- ファームウェアがセンサーの初期化に失敗した状態(赤 LED、テキストで `FAILED: ...` を出し続け、キーを受け付けない)で接続・切断したとき、3 秒後の注意が出ること、「切断」で固まらずに未接続に戻ること(`t` の送信は 500 ms、ポートを閉じる処理は 1 秒で打ち切る)
+- 接続中に USB を抜いたとき、エラーをログに出して未接続に戻り、挿し直して再び接続できること。再接続で `open` が失敗した場合(前のポートが閉じ切っていないと `InvalidStateError` になりうる)は、ログに「ポートを開けない(InvalidStateError: ...)」のようにエラーの名前と内容が出ること。そのときはページを再読み込みしてから接続し直す
+- 接続後にメッセージが来ない場合(ファームウェアが初期化に失敗した状態など)に、3 秒後にログへ注意が出ること
+- `tools/capture_serial.py` の記録ファイルを「記録ファイルの再生」で開き、記録時のタイムスタンプ・一定 15 fps の両方で再生できること。統計が `decode_capture.py` の出力と一致すること
+- 描画の負荷: 長時間(数分)表示しても fps が落ちず、ブラウザのタブが重くならないこと
 
 #### Step 2
 
@@ -259,6 +340,31 @@ tools/verification/
   verify_depth_view_expected_values.py  depth_view のテストの期待値の検算
   estimate_ranging_read_time.py         読み出しバイト数と I2C の転送時間の見積もり
   decode_capture.py                     記録のデコードと統計(テストベクタで自己検査する)
+web/                      ブラウザアプリ(Vite + TypeScript。node_modules/ と dist/ は git に入れない)
+  index.html              入口(画面の要素)
+  package.json            依存と npm scripts(package-lock.json も管理する)
+  tsconfig.json           型チェックの設定(strict、noUncheckedIndexedAccess)
+  vite.config.ts          Vite と Vitest の設定
+  eslint.config.js        ESLint(flat config、typescript-eslint)。解析のモジュールから document / window / navigator を使うと失敗する
+  .prettierrc.json        Prettier の設定
+  src/
+    cobs.ts               COBS のエンコード・デコード
+    crc32.ts              CRC-32(IEEE)
+    frame.ts              ペイロード・パケットの解析と検証(仕様書の拒否条件)
+    stream.ts             チャンク → 0x00 区切り → パケット(上限付きバッファ、同期前の読み捨て)
+    stats.ts              seq の欠落・後退、拒否の数、受信レート、タイムスタンプの間隔の異常
+    receiver.ts           stream + frame + stats をつなぐ受信処理(Web Serial と再生で共通)
+    replay.ts             記録ファイルの区間分けと再生のタイミング
+    view.ts               向き、ゾーンの有効判定、色、自動レンジ、ゾーンの説明文(DOM 非依存)
+    serial.ts             Web Serial の接続・読み取りループ・切断・エラー処理
+    render.ts             Canvas 2D の描画(画像と凡例)
+    main.ts               画面と状態(グローバルな可変状態はここだけ)、requestAnimationFrame の描画ループ
+    style.css             画面のスタイル
+  test/
+    vectors.ts            docs/frame-vectors.json の読み込みと形の検査
+    *.test.ts             Vitest のテスト(cobs / crc32 / frame / stream / stats / replay / view / capture)
+    fixtures/
+      step3_cap_20260927.bin  実機の記録(2026-09-27、COM7、tools/capture_serial.py で 6 秒、step3 のファームウェア。85886 バイト)
 third_party/
   vl53l8cx_uld/           ST の VL53L8CX ULD 2.0.0(BSD-3-Clause。改変しない)
   unity/                  Unity(MIT)
@@ -309,3 +415,18 @@ third_party/
   - **遅いホスト**(読むが約 13.8 KB/s に追いつかない): FIFO に書けるたびに `last_avail_time` が更新されるので捨てられず、FIFO が満杯になるたびに最大 500 ms まで待つ。**測距ループが繰り返し止まり、その間のセンサーのフレームは読まれない**。メッセージが作られないので seq は飛ばない。この取りこぼしは、測距フレームの timestamp の間隔(15 Hz で約 66.7 ms。取りこぼすとその倍数に近くなる)で分かる([docs/frame-format.md](docs/frame-format.md) の「シーケンス番号」「送信側の制約」)
   - ポートを閉じた(DTR が落ちた): SDK は未接続とみなして待たずに捨てるので止まらない
 - 状態メッセージの flags はファームウェアの表示の反転(既定 h=1 v=0)。ブラウザ側は描画の反転の初期値に使える
+
+## 設計メモ(Step 3 ブラウザ)
+
+- 解析(`cobs.ts` / `crc32.ts` / `frame.ts` / `stream.ts` / `stats.ts` / `receiver.ts` / `replay.ts` / `view.ts`)は DOM / Web API に依存させず、Vitest で Node 上でテストする。ESLint で document / window / navigator の使用を禁止して境界を守っている
+- 失敗は例外ではなく判別可能な値(`{ ok: false, reason }`)で返す。reason は仕様書の「受信側の手順」の語と同じ。区切りが来ないまま上限(2657 バイト)を超えたものは、仕様書の理由にない `overflow` として別に数える
+- 受信バッファは上限の大きさ(2657 バイト)の 1 つだけ。上限を超えたら次の 0x00 まで読み捨てる
+- ログと状態の文字列は、印字可能な ASCII 以外を `?` に置き換えて持ち、DOM には textContent で入れる(HTML として解釈しない)
+- テストは `docs/frame-vectors.json` を `?raw` で読み、形を実行時に確かめてから使う。messages / invalid は同期済みの前提なので先頭に 0x00 を足し、streams は同期前から流す。streams の期待値(leading / trailing / 長さ 0 のパケット / 受け付けた seq / 欠落 / 後退 / 理由別の拒否)は、1 チャンク・全分割位置・1 バイトずつで一致することを確かめる。知らないセクションが増えると todo として表示される
+- 描画は requestAnimationFrame で、データが変わったときだけ描く。受信のたびには描かない。統計の欄は 250 ms ごとに更新する
+- 自動レンジは、広がるときは即座に、狭まるときは 1 フレームごとに差の 10% ずつ追従する(フレームごとのちらつきを抑える)
+- 距離の色は Step 2 と同じ「近 = 暖色 → 遠 = 寒色」だが、8 段階ではなく色相 0〜240° の連続。sigma の上限 50 mm は Step 2 の暫定値に合わせて `view.ts` の定数にしている
+- 実機の記録 `test/fixtures/step3_cap_20260927.bin`(2026-09-27、COM7、`tools/capture_serial.py` で 6 秒、step3 のファームウェア)を `capture.test.ts` がデコードする。期待値は `tools/verification/decode_capture.py`(Python の別実装)の出力と同じ: 最初の 0x00 の前に捨てるバイト 2083、状態 1・測距フレーム 91、拒否 0、seq の欠落・後退 0、最大のフレーム間隔 70660 µs。1 チャンク・64 バイトずつ・再生の区間ごとの 3 通りで流す。ワークスペース直下の `.gitignore` が `*.bin` を除外しているので、`web/.gitignore` で `test/fixtures/*.bin` だけ戻している。Vitest では `?inline`(base64 の data URL)で読むため、`vite.config.ts` の `assetsInclude` に `.bin` を入れている
+- 再生(`ReplayPlayer`)は、繰り返しの継ぎ目と再生の開始で `onRestart` を呼び、`main.ts` がそこで受信処理と表示をリセットする。予定時刻から 500 ms を超えて遅れたら、溜まった区間を一気に流さず予定を今に合わせる。どちらもフェイクタイマーでテストしている(時計は `now` で差し替える)
+- 変異テスト(49 個の変異を 1 つずつ入れて Vitest を実行)で 48 個を検出。残る 1 個(距離を `getUint16` で読む)は、`Int16Array` に入れる時点で符号付きに戻る等価変異。レビュー対応で足した対象: 再生の `onRestart`・繰り返し・遅延の分岐と上限・合わせ直す時刻、`firstTargets` の添字・T の検査・T = 1 の近道
+- 画面・Web Serial の部分(`main.ts` の反転の上書きの条件、`serial.ts` の送信の順番・タイムアウト・close の打ち切り)は Vitest の対象外で、ブラウザでの確認項目にしている
