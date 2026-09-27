@@ -207,6 +207,23 @@ export class Scene3D {
     this.scene.add(this.makeFloorGrid(), this.makeRings(), this.makeAxes(), this.makeSensor());
   }
 
+  /**
+   * 表示の大きさを変える(全画面の切り替え・ウィンドウのリサイズ)。
+   *
+   * @param width - 幅 [CSS px]
+   * @param height - 高さ [CSS px]
+   */
+  resize(width: number, height: number): void {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    // devicePixelRatio が変わった(別の倍率のモニタへ移した等)ときにも追随する
+    this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+    this.renderer.setSize(w, h);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.dirty = true;
+  }
+
   /** 視点を初期位置(センサーの右後ろ上から前方を見る)に戻す */
   resetView(): void {
     this.camera.position.copy(INITIAL_CAMERA);

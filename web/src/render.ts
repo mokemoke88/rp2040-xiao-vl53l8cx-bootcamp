@@ -34,17 +34,45 @@ const TEXT_SECONDARY = "#c3c2b7";
 const HOVER_OUTLINE = "#ffffff";
 
 /**
- * canvas の大きさを CSS px で決め、devicePixelRatio に合わせて描画の解像度を上げる。
+ * 8x8 画像の canvas の大きさを決め、devicePixelRatio と倍率に合わせて描画の解像度を上げる。
+ * 描画の座標は倍率によらず GRID_PX 基準(一辺 320)のままで、ctx の変換で拡大する(全画面で大きく描くため)。
+ * 呼ぶたびに canvas の中身と ctx の状態は消える(描き直しが要る)。
+ *
+ * @param scale - 表示の倍率(1 = 一辺 GRID_PX [CSS px])
+ * @returns 描画コンテキスト(座標は GRID_PX 基準)
+ * @throws Error 2D コンテキストを得られないとき
+ */
+export function setupCanvas(canvas: HTMLCanvasElement, scale = 1): CanvasRenderingContext2D {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = `${GRID_PX * scale}px`;
+  canvas.style.height = `${(GRID_PX + LEGEND_PX) * scale}px`;
+  canvas.width = Math.round(GRID_PX * dpr * scale);
+  canvas.height = Math.round((GRID_PX + LEGEND_PX) * dpr * scale);
+  const ctx = canvas.getContext("2d");
+  if (ctx === null) {
+    throw new Error("Canvas 2D is not available");
+  }
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+  return ctx;
+}
+
+/**
+ * 任意の大きさの canvas(LiDAR 風ビューなど)を CSS px で決め、devicePixelRatio に合わせる。
+ * 呼ぶたびに canvas の中身と ctx の状態は消える。
  *
  * @returns 描画コンテキスト(座標は CSS px)
  * @throws Error 2D コンテキストを得られないとき
  */
-export function setupCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+export function sizeCanvas(
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+): CanvasRenderingContext2D {
   const dpr = window.devicePixelRatio || 1;
-  canvas.style.width = `${GRID_PX}px`;
-  canvas.style.height = `${GRID_PX + LEGEND_PX}px`;
-  canvas.width = Math.round(GRID_PX * dpr);
-  canvas.height = Math.round((GRID_PX + LEGEND_PX) * dpr);
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  canvas.width = Math.max(1, Math.round(width * dpr));
+  canvas.height = Math.max(1, Math.round(height * dpr));
   const ctx = canvas.getContext("2d");
   if (ctx === null) {
     throw new Error("Canvas 2D is not available");

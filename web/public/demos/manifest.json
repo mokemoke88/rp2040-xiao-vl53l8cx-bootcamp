@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "demos": [
+    {
+      "id": "step3-sample",
+      "file": "step3_cap_20260927.bin",
+      "title": "仮のデモ(Step 3 の動作確認の記録)",
+      "description": "2026-09-27 に COM7 で 6 秒記録した室内の場面。デモ用の記録を収録したら差し替える",
+      "seconds": 6,
+      "view": "lidar"
+    }
+  ]
+}

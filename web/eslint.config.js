@@ -14,6 +14,9 @@ const pureModules = [
   "src/replay.ts",
   "src/view.ts",
   "src/geometry.ts",
+  "src/scan2d.ts",
+  "src/demos.ts",
+  "src/lecture/text.ts",
 ];
 
 export default defineConfig(

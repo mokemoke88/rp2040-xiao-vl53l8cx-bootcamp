@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VL53L8CX ヒートマップ</title>
+    <title>VL53L8CX デモ</title>
   </head>
   <body>
     <header>
@@ -43,6 +43,20 @@
           <span id="replay-progress"></span>
         </fieldset>
         <fieldset>
+          <legend>デモ(実機なし)</legend>
+          <select id="demo-select" disabled>
+            <option value="">読み込み中…</option>
+          </select>
+          <button id="demo-play" type="button" disabled>ループ再生</button>
+          <span id="demo-status"></span>
+        </fieldset>
+        <fieldset>
+          <legend>プレゼン</legend>
+          <select id="view-select"></select>
+          <button id="present" type="button">全画面(F)</button>
+          <span class="note" id="present-help"></span>
+        </fieldset>
+        <fieldset>
           <legend>表示</legend>
           <label><input id="flip-h" type="checkbox" checked /> 左右反転</label>
           <label><input id="flip-v" type="checkbox" /> 上下反転</label>
@@ -57,7 +71,34 @@
         ピン列を左にした見た目になる。状態メッセージを受け取ると、その
         flags(ファームウェアの反転)に合わせる。
       </p>
-      <section class="images">
+      <section class="panel view" data-view="lidar" id="view-lidar">
+        <h2>LiDAR 風ビュー(真上から見た図)</h2>
+        <div class="view-controls">
+          <label
+            >スキャン線の行
+            <select id="lidar-band">
+              <option value="center">中央 2 行(水平面の断面)</option>
+              <option value="all">全行</option>
+            </select>
+          </label>
+          <label
+            >最大距離
+            <select id="lidar-range">
+              <option value="2000">2 m</option>
+              <option value="3000" selected>3 m</option>
+              <option value="4000">4 m</option>
+            </select>
+          </label>
+          <label><input id="lidar-trail" type="checkbox" checked /> 残像(1.5 秒)</label>
+          <label><input id="lidar-motion" type="checkbox" checked /> 動いたゾーンを強調</label>
+          <label><input id="lidar-sweep" type="checkbox" /> 走査の演出</label>
+        </div>
+        <canvas id="lidar-canvas"></canvas>
+        <p class="note" id="lidar-note"></p>
+        <p class="effect-note" id="sweep-note" hidden></p>
+      </section>
+
+      <section class="images view" data-view="images" id="view-images">
         <figure>
           <figcaption>距離</figcaption>
           <canvas id="img-distance"></canvas>
@@ -72,7 +113,7 @@
         </figure>
       </section>
 
-      <section class="panel view3d">
+      <section class="panel view3d view" data-view="3d" id="view-3d">
         <h2>3D 点群(Step 4)</h2>
         <div class="controls3d">
           <label
@@ -113,6 +154,51 @@
         </p>
       </section>
 
+      <section class="panel view lecture" data-view="lectureA" id="view-lectureA">
+        <h2 id="lectureA-title"></h2>
+        <div class="lecture-figs">
+          <figure>
+            <figcaption id="lectureA-left"></figcaption>
+            <canvas id="lectureA-canvas-left"></canvas>
+          </figure>
+          <figure>
+            <figcaption id="lectureA-right"></figcaption>
+            <canvas id="lectureA-canvas-right"></canvas>
+          </figure>
+        </div>
+        <ul class="lecture-text" id="lectureA-lines"></ul>
+      </section>
+
+      <section class="panel view lecture" data-view="lectureB" id="view-lectureB">
+        <h2 id="lectureB-title"></h2>
+        <div class="lecture-figs">
+          <figure>
+            <figcaption id="lectureB-left"></figcaption>
+            <canvas id="lectureB-canvas-left"></canvas>
+          </figure>
+          <figure>
+            <figcaption id="lectureB-right"></figcaption>
+            <canvas id="lectureB-canvas-right"></canvas>
+          </figure>
+        </div>
+        <ul class="lecture-text" id="lectureB-lines"></ul>
+      </section>
+
+      <section class="panel view lecture" data-view="lectureC" id="view-lectureC">
+        <h2 id="lectureC-title"></h2>
+        <div class="lecture-figs">
+          <figure>
+            <figcaption id="lectureC-left"></figcaption>
+            <canvas id="lectureC-canvas-left"></canvas>
+          </figure>
+          <figure>
+            <figcaption id="lectureC-right"></figcaption>
+            <canvas id="lectureC-canvas-right"></canvas>
+          </figure>
+        </div>
+        <ul class="lecture-text" id="lectureC-lines"></ul>
+      </section>
+
       <section class="panels">
         <div class="panel">
           <h2>ゾーン</h2>
@@ -133,6 +219,7 @@
         <ol id="logs"></ol>
       </section>
     </main>
+    <p class="present-footer" id="present-footer"></p>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
