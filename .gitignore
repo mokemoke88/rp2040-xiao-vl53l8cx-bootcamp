@@ -1,0 +1,23 @@
+# CMake / Ninja のビルドディレクトリ
+build/
+build-*/
+
+# 個人用の CMake プリセット(CMakePresets.json は共有するので対象外)
+CMakeUserPresets.json
+
+# clangd のキャッシュと、ビルドディレクトリからコピーしたコンパイル DB
+.cache/
+compile_commands.json
+
+# ビルド成果物(build/ の外にコピーした場合)
+*.uf2
+*.elf
+*.bin
+*.hex
+*.dis
+*.elf.map
+
+# 環境が勝手に作るもの
+__pycache__/
+Thumbs.db
+.DS_Store

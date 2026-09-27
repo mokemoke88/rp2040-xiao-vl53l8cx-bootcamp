@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# Windows のバッチは CRLF でないと正しく動かないことがある
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# バイナリ(改行変換・差分表示をしない)
+*.uf2 binary
+*.elf binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.pdf binary

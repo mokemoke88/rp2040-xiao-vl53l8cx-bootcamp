@@ -1,0 +1,34 @@
+BasedOnStyle: LLVM
+
+# 基本
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ColumnLimit: 120
+LineEnding: LF
+
+# 波括弧
+BreakBeforeBraces: Attach
+
+# 関数
+AlignAfterOpenBracket: Align
+AllowShortFunctionsOnASingleLine: Empty
+BinPackParameters: true
+BinPackArguments: true
+
+# 制御構文
+AllowShortBlocksOnASingleLine: Never
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+
+# ポインタ (C慣習: type *name)
+PointerAlignment: Right
+SpaceAfterCStyleCast: false
+
+# include
+SortIncludes: CaseInsensitive
+IncludeBlocks: Preserve
+
+# コメント
+SpacesBeforeTrailingComments: 1
+ReflowComments: false
