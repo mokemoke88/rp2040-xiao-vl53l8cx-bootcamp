@@ -19,6 +19,7 @@ pico_sdk_init()
 # 自作のソース
 set(BOOTCAMP_SOURCES
   src/main.c
+  src/depth_view.c
   src/i2c_bus_recover.c
   src/platform.c
   src/uld_util.c

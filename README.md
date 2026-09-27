@@ -41,7 +41,7 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 | Step | 内容 | 学ぶこと | 状態 |
 |---|---|---|---|
 | 1. 測距 | ULD ドライバを移植し、4x4 の距離を USB シリアルに printf | 配線、I2C、ULD のプラットフォーム層、センサーへのファームウェア転送 | 完了(2026-09-27。ゾーンの向きの確認は Step 2 に持ち越し) |
-| 2. 距離画像 | 8x8 / 15 Hz にし、測距ステータスと sigma で無効ゾーンを除く。ターミナルに文字でヒートマップを出す | 解像度とレートの関係、測距データの信頼性 | 未着手 |
+| 2. 距離画像 | 8x8 / 15 Hz にし、測距ステータスと sigma で無効ゾーンを除く。ターミナルに文字でヒートマップを出す | 解像度とレートの関係、測距データの信頼性 | 完了(2026-09-27) |
 | 3. PC ヒートマップ | フレームをバイナリで送り(同期ヘッダ + 長さ + CRC)、ブラウザでリアルタイムにヒートマップ表示 | シリアルのフレーム設計、Web Serial | 未着手 |
 | 4. 点群 | ゾーンの方向と距離から XYZ に変換し、three.js で 3D 点群表示(視点を回せる) | ToF の幾何(画角とゾーン中心の方向) | 未着手 |
 | 5. 最終デモ | 「LiDAR 風ビュー」: 3D 点群 + 真上から見た扇形の 2D スキャン表示(列ごとの最近距離)+ 残像 + 動いたものの強調 | まとめ | 未着手 |
@@ -63,7 +63,9 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 
 ## ドキュメント
 
-- [tests/CASES.md](tests/CASES.md) — ホストで単体テストする部分(`src/uld_util.c`)の入力と期待値、変異テストの結果
+- [tests/CASES.md](tests/CASES.md) — ホストで単体テストする部分(`src/uld_util.c`、`src/depth_view.c`)の入力と期待値、変異テストの結果
+- `tools/verification/verify_depth_view_expected_values.py` — depth_view のテストの期待値(距離の段階の境界、4x4 の表示文字列)の検算
+- `tools/verification/estimate_ranging_read_time.py` — 1 フレームの読み出しバイト数と I2C の転送時間の見積もり(下記「設計メモ(Step 2)」)
 - [third_party/vl53l8cx_uld/README.md](third_party/vl53l8cx_uld/README.md) — ULD の出どころと差し替えたファイル
 
 ## ビルド・書き込み
@@ -81,7 +83,9 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 |---|---|
 | `make format` | clang-format で整形(`include/` `src/` `tests/` のみ。`third_party/` は対象外) |
 | `make lint` | 整形済みか検査(差分があれば失敗) |
-| `make test` | `src/uld_util.c` をホストの gcc でビルドし、Unity のテストを実行。分割書き込みの塊の長さを既定(256)と 7 の 2 構成でビルドして両方実行する。成果物は `build-host/` |
+| `make test` | `src/uld_util.c` と `src/depth_view.c` をホストの gcc でビルドし、Unity のテストを実行。uld_util は分割書き込みの塊の長さを既定(256)と 7 の 2 構成でビルドして両方実行する。成果物は `build-host/` |
+| `python tools/verification/verify_depth_view_expected_values.py` | depth_view のテストの期待値を出力する(テストに書いた値と照合する) |
+| `python tools/verification/estimate_ranging_read_time.py` | 4x4 / 8x8 の 1 フレームの読み出しバイト数と I2C の転送時間の見積もりを出力する |
 | `make firmware` | `cmake -S . -B build -G Ninja -DPICO_BOARD=seeed_xiao_rp2040` + `cmake --build build`。`build/xiao_vl53l8cx_bootcamp.uf2` ができる |
 
 コードを変更したら `make format` → `make lint` → `make test` を1つずつ実行し、警告なし・全 PASS を確認する。ファームウェア側を変えた場合は `make firmware` も警告なしで通ること。`-Wall -Wextra` は自作のソースだけに付けている(ULD と SDK には付けない)。
@@ -90,30 +94,86 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 
 1. XIAO の B(BOOT)ボタンを押しながら USB で PC に接続する(または接続中に B を押したまま R を押して離す)
 2. `RPI-RP2` ドライブが現れるので、`build/xiao_vl53l8cx_bootcamp.uf2` をコピーする。コピーが終わると自動で再起動する
-3. 出力は USB CDC(仮想 COM ポート)。ターミナルソフトで開く(ボーレートの設定は関係ない)。起動後 3 秒まではターミナルの接続を待つので、その間に開けば初期化のログから見られる
+3. 出力は USB CDC(仮想 COM ポート)。ターミナルソフトで開く。起動後 3 秒まではターミナルの接続を待つので、その間に開けば初期化のログから見られる
 
-表示の例(値は説明用):
+#### PuTTY の設定
+
+- Session: Connection type = **Serial**、Serial line = XIAO の COM ポート(例 `COM7`)。Speed の値は USB CDC なので関係ない(既定の 9600 のままでよい)
+- Connection > Serial: Flow control = **None** を推奨
+- 色は ANSI 256 色(`ESC[48;5;Nm` など)を使う。PuTTY は Window > Colours の "Allow terminal to use xterm 256-colour mode" が既定で有効
+- 出力は ASCII だけ(罫線は `+ - |`)なので、Window > Translation の文字コードの設定に依存しない
+- 改行は "\r\n" で届く。Pico SDK の stdio は、USB の出力で "\n" を "\r\n" に変換する設定が既定で有効(`PICO_STDIO_ENABLE_CRLF_SUPPORT` = 1、`PICO_STDIO_DEFAULT_CRLF` = 1、USB 用の `PICO_STDIO_USB_DEFAULT_CRLF` の既定は `PICO_STDIO_DEFAULT_CRLF`。SDK の stdio.h / stdio_usb.h / stdio.c で確認)。PuTTY の "Implicit CR in every LF" は不要
+- 1 文字コマンドは、PuTTY がキーを押すたびに 1 文字ずつ送る前提(Serial 接続では既定でローカルの行編集が働かない前提。PuTTY の文書では確認していない)。Enter は不要。Enter を押すまで効かない場合は、Terminal > Line discipline options の Local line editing を Force off にする
+- ログを取る場合(serial-read スキルなど)は、Pico の USB CDC は DTR が立たないと出力しないので DTR を立てて開く。解析用には `c` でモノクロにする
+
+#### 操作キー
+
+| キー | 動作 |
+|---|---|
+| `h` / `H` | 左右反転を切り替える |
+| `v` / `V` | 上下反転を切り替える |
+| `c` / `C` | カラー(ANSI 256 色、画面を上書き)とモノクロ(ANSI エスケープなし、流れる)を切り替える |
+| `?` | ヘルプを表示する(約 5 秒、または何かキーを押すまで距離画像の表示を止める) |
+
+起動時はカラー表示、左右反転あり・上下反転なし(h=1 v=0。下記「表示の読み方」の向きの確定値)。カラー表示では、起動後最初の描画・`c` でカラーに切り替えたとき・ヘルプの後に、画面全体を消し(`ESC[2J`)、以後はカーソルを左上に戻して(`ESC[H`)上書きする。各行の末尾で `ESC[K`、ステータス行の後で `ESC[J` を出し、前の表示の残りを消す。
+
+#### 表示の読み方
+
+モノクロ表示の例(8x8、既定の h=1 v=0。値は `depth_view_render` / `depth_view_render_status` に作ったデータを渡して生成したもので、実測ではない):
 
 ```
-xiao-vl53l8cx-bootcamp step 1 (ULD VL53L8CX_2.0.0)
-I2C bus recovery: 0 clocks, STOP sent, SDA=1 SCL=1
-I2C1 399361 Hz (requested 400000 Hz)
-sensor alive
-init done in 2000 ms
-ranging 4x4 @ 10 Hz ('!' = target_status other than 5/9)
-frame 1 temp=30C
-    312/  5     305/  5  ...
+                           up
+       +----------------------------------------+
+       | .260 =138 +120 +102 * 84 # 66 % 48 % 30|
+       | -160 =142 +124 +106 * 88 # 70 x    % 34|
+       | -164 =146 =128 ?    * 92 # 74 # 56 % 38|
+  9pin | -168 =150 =132 +114 * 96 * 78 # 60 % 42| 4pin
+       | -172 -154 =136 +118 *100 * 82 # 64 % 46|
+       | :176 -158 =140 +122 +104 * 86 # 68 % 50|
+       | :180 -162 =144 =126 +108 * 90 # 72 # 54|
+       |      -166 =148 =130 +112 * 94 * 76 # 58|
+       +----------------------------------------+
+                           down
+[cm] near @%#*+=-: far .=>2000mm x=status ?=sigma>50mm blank=none
+frame 123 | temp 31C | zone0 top-right (h=1 v=0)
+15.0 fps | read 11.20 ms | draw 3 ms | 452 B/frame
+valid 61/64 (x 1, ? 1, none 1) | errors ready 0 data 0
+sigma of status-ok zones: median 19 max 80 limit 50 | keys h v c ?
 ```
 
-- 各ゾーンは `距離[mm]/測距ステータス`。ステータスが 5 / 9 以外のゾーンには `!` を付ける(255 はターゲットなし)
-- `I2C bus recovery` はバス復旧(下記「設計メモ」)の結果。SDA が Low のまま起動したときだけ clocks が 1 以上になる
-- `I2C1 ... Hz` は i2c_init が返す実際のクロック。既定の clk_sys 125 MHz では 399361 Hz になる見込み(SDK の i2c_set_baudrate の計算: period = (125000000 + 200000) / 400000 = 313 クロック、125000000 / 313 = 399361)
-- ゾーン番号 i を i / 4 行目・i % 4 列目に並べている。センサーの向きと表示の上下左右の対応は未確認
+- 画面は 8x8 で 17 行、各行は ANSI エスケープを除いて 80 桁以内(PuTTY の既定 80 x 24 に収まる。ヘルプも同じ。テストで最長の値の場合を検査している)
+- 各ゾーンは距離 [cm]。モノクロは前に濃淡の文字(近い順に `@ % # * + = - :`、0〜2000 mm を 250 mm ごとの 8 段階。2000 mm 超は `.`)。カラーは背景色(近 = 赤 → 黄 → 緑 → 遠 = 青、2000 mm 超は暗い紫(256 色の 53)。段階 7 の青、無効の灰色と見分けられる色にしている)
+- 無効なゾーン: `x` = 測距ステータスが 5 / 9 以外、`?` = ステータスは有効だが sigma が上限(既定 50 mm、暫定)を超える、空白 = ターゲットなし。カラーでは灰色の背景
+- 枠の外の目印は、**センサーを自分に向けて、9 ピン列が左・4 ピン列が右になるように持ったとき**の物理的な向き(左 `9pin`、右 `4pin`、上 `up`、下 `down`)。目印は表示に固定で、反転しても動かない。反転で変わるのは、どのゾーンをどこに描くか。ステータス行の `zone0` は、センサーのゾーン 0 を描いている角
+- **向きの確定値: 左右反転あり・上下反転なし(h=1 v=0)**(2026-09-27、ユーザー報告。PuTTY で、センサーを自分に向け 9 ピン列を左にして持ち、表示と見た目が一致した。離れて腕を振ると表示が追随した)。このとき **ゾーン 0 は、センサーを正面から見て 9 ピン列を左にしたときの右上** にあり、表示でも右上に描かれる。既定値は `include/bootcamp_config.h` の `BOOTCAMP_FLIP_H_DEFAULT` / `BOOTCAMP_FLIP_V_DEFAULT`
+- ステータス行 1: フレーム番号(1 フレーム目は `(warming up)`。起動直後の 1 フレーム目はステータスが 6 / 13 で無効になる)、センサーの温度、ゾーン 0 の角と反転の状態
+- ステータス行 2: 直近 15 フレームの合計時間から求めたフレームレート、`get_ranging_data` の所要時間、前のフレームの描画(文字列の組み立てと USB への出力)の所要時間、1 フレームで読むバイト数(ULD の `data_read_size`)
+- ステータス行 3: 有効なゾーン数と無効の内訳、読み出しエラーの累計(`check_data_ready` と `get_ranging_data`)。エラーの行はカラー表示では次の描画で消えるので、累計で分かるようにしている
+- ステータス行 4: ステータスが有効なゾーン(sigma で除く前)の sigma の中央値・最大と上限。sigma の上限を調整する目安にする
+- 起動時のログはカラー表示の最初の描画で画面から消える。見たいときは PuTTY のスクロールバックを遡るか、モノクロ(`c`)に切り替えてからリセットする(serial-read でログを取る場合も同じ。ただし起動直後はカラーなので、ログには ANSI エスケープが入る)
 - 初期化に失敗すると赤 LED が点き、`FAILED: <処理> status=<値> (last_i2c_error=..., i2c_error_count=...)` を 2 秒ごとに表示し続ける。測距が始まると緑 LED が点く
+- 起動時のログ(`I2C bus recovery`、`I2C1 ... Hz`、`sensor alive`、`init done in ... ms`、`ranging 8x8 @ 15 Hz, N bytes per frame`)は Step 1 と同じ。`I2C1 ... Hz` は既定の clk_sys 125 MHz で 399361 Hz(SDK の i2c_set_baudrate の計算: period = (125000000 + 200000) / 400000 = 313 クロック、125000000 / 313 = 399361)。`N bytes per frame` は 8x8 で 452 の見込み(下記「設計メモ(Step 2)」)
 
 ### 実機で確認すること
 
 確認済みと書いているのは、ユーザーから報告があった範囲だけ。
+
+#### Step 2
+
+- PuTTY でカラー表示とキー操作が動くこと — 確認済み(2026-09-27、ユーザー報告)
+- 向きの確定 — 確認済み(2026-09-27、ユーザー報告): h=1 v=0 で一致。離れて腕を振ると表示が追随した
+  - 手順: 30 cm 程度の距離で、センサーを自分に向けて 9 ピン列が左になるように持ち、9 ピン側の半分を手で隠す → 表示の左半分が近く(または無効)になるように `h` を合わせる。次に上半分を隠して `v` を合わせる
+  - 隠した側が左右ではなく上下に出る(またはその逆)場合は、反転ではなく転置(行と列の入れ替え)が必要になる。今回のキャリアと持ち方では h / v だけで合ったので、転置の切り替えは用意していない
+- 8x8 / 15 Hz で表示されること。ステータス行 2 の fps が 15 前後、`B/frame` が 452 であること
+  - 確認済み(2026-09-27、serial-read で取得): 14.9〜15.1 fps、452 B/frame、`errors ready 0 data 0`。8x8 / 15 Hz の連続測距でセンサーの温度表示は 49 °C(Step 1 の 4x4 / 10 Hz では 28〜33 °C)
+- `read` の値(見積もり: I2C の転送だけで 10.3 ms 以上)と、`draw` の値(下記「設計メモ(Step 2)」の見積もり)。両者の和が 66.7 ms に収まるか
+  - 確認済み(同上): read 12.63 ms、draw はカラー 3 ms・モノクロ 2 ms。和は約 16 ms で、周期 66.7 ms に十分収まる
+- `c` でモノクロに切り替えて流れ、もう一度 `c` でカラーに戻ること — 確認済み(同上。`c` を USB から送って確認)
+- `?` のヘルプの後にカラー表示に戻ること、大文字のキーも効くこと — 未確認
+- sigma の上限(暫定 50 mm)の妥当性。ステータス行 4 の中央値・最大と、`?` のゾーンの出方を見て決める
+  - 観測(2026-09-27、室内・約 0.7〜2.4 m の場面で 5 秒間): ステータス有効ゾーンの sigma は中央値 10〜11 mm、最大 45〜60 mm。50 mm で落ちるのは 1 フレームに 0〜1 ゾーン程度。当面 50 mm のまま使う(明るい環境・遠距離では未確認)
+
+#### Step 1
 
 - 4x4 の距離が 10 Hz で表示され続けること
   - 確認済み(2026-09-27、ユーザー報告: COM7 で frame 1260 台まで安定して出ていた。ステータスはほぼ 5、近距離で 9)
@@ -122,7 +182,7 @@ frame 1 temp=30C
 - 起動直後のログ: `sensor alive`、`init done in ... ms`(400 kHz で約 2 秒の見込み)、`I2C1 ... Hz`(399361 Hz の見込み)、`I2C bus recovery` の行
   - 確認済み(2026-09-27): `I2C1 399361 Hz`、`sensor alive`、`init done in 2621 ms`。起動直後の 1 フレーム目はステータス 6 / 13(無効)で、2 フレーム目から 5 になる
 - 手をかざすと近くのゾーンの距離が変わること — 確認済み(2026-09-27。センサーの保護テープの有無で目立った差はなかった)
-- ゾーンの並びとセンサーの向きの対応 — 未確認。4x4 のテキストでは手の位置との対応が読み取りにくかったので、Step 2 のヒートマップで確認する
+- ゾーンの並びとセンサーの向きの対応 — Step 2 で確定(上記)
 - 測距中に R ボタン、または BOOTSEL での再書き込みでリセットした後、正常に再起動すること(`I2C bus recovery` の clocks と、その後の `sensor alive`)
   - 確認済み(2026-09-27、R ボタンで 2 回): どちらも再起動して測距を再開した。ログが取れた回は `0 clocks`(バスは固着していなかった)。固着からの復旧そのものはまだ起きていない
 - XIAO の 3V3 から給電して、長時間の測距中にリセット・NACK(`check_data_ready error`)が出ないこと — 未確認(上記の約 2 分間は出ていない)
@@ -152,18 +212,24 @@ Makefile                  make test / format / lint(ホスト)、make firmware(C
 .clangd                   clangd がファームウェアのコンパイル DB(build/)を使う設定
 LICENSE                   MIT
 include/
-  bootcamp_config.h       ピン番号、I2C のクロック、測距の頻度などの設定
+  bootcamp_config.h       ピン番号、I2C のクロック、解像度・測距の頻度、sigma の上限、表示の既定値などの設定
+  depth_view.h            距離画像の表示(ゾーンの有効判定、反転、距離の段階化、sigma の統計、文字列の組み立て)
   i2c_bus_recover.h       I2C バスの復旧(SCL の手動クロックと STOP)
   platform.h              ULD のプラットフォーム層(ULD が固定名で include する。出力の有効・無効もここで決める)
   uld_util.h              プラットフォーム層の SDK 非依存の部分(バイト順の入れ替え、分割書き込みのループ、タイムアウト、ステータス判定)
 src/
-  main.c                  初期化(USB CDC、LPn、I2C バス復旧、I2C1)→ ULD の初期化 → 4x4 の測距結果をポーリングして表示
+  main.c                  初期化(USB CDC、LPn、I2C バス復旧、I2C1)→ ULD の初期化 → 8x8 の測距結果をポーリングして距離画像を表示、1 文字コマンド
+  depth_view.c            depth_view.h の実装(stdint.h / stdbool.h / stddef.h と uld_util.h だけに依存。ホストでテストする)
   i2c_bus_recover.c       i2c_bus_recover.h の実装(GPIO でオープンドレインを模して操作)
   platform.c              VL53L8CX_RdByte / WrByte / RdMulti / WrMulti / WaitMs / SwapBuffer / Reset_Sensor の RP2040 実装
   uld_util.c              uld_util.h の実装(stdint.h / stdbool.h だけに依存。ホストでテストする)
 tests/
-  test_uld_util.c         Unity による単体テスト
+  test_uld_util.c         uld_util の単体テスト(Unity)
+  test_depth_view.c       depth_view の単体テスト(Unity)
   CASES.md                テストの入力と期待値の対応表
+tools/verification/
+  verify_depth_view_expected_values.py  depth_view のテストの期待値の検算
+  estimate_ranging_read_time.py         読み出しバイト数と I2C の転送時間の見積もり
 third_party/
   vl53l8cx_uld/           ST の VL53L8CX ULD 2.0.0(BSD-3-Clause。改変しない)
   unity/                  Unity(MIT)
@@ -183,3 +249,18 @@ third_party/
 - SDA / SCL / INT / LPn の内蔵プルダウン(RP2040 のリセット既定)は外す。プルアップはキャリア基板側にある
 - 起動時に I2C バスを復旧してから I2C1 を使い始める(`src/i2c_bus_recover.c`)。測距中に MCU だけがリセットされると、センサーが読み出しの途中で SDA を Low に保持したままになりうる。SDK の I2C 関数はタイムアウトしても abort も STOP もしない(i2c.c)ので、そのままでは is_alive で止まる。SDA / SCL を GPIO にして、SDA が Low の間 SCL を最大 9 回クロックし、SDA が High になったら STOP を出す。手動クロックは約 100 kHz(半周期 5 µs)で、SCL を離した後は最大 1 ms まで High になるのを待つ(クロックストレッチ対策)
 - ULD との境界(`VL53L8CX_WaitMs` の `sleep_ms`、`vl53l8cx_init` などの ULD の関数)はブロッキングを許容する。ULD がブロッキングで書かれているため、c-pico-sdk.md の「待ちはブロッキングにしない」の例外とする。メインループのデータ待ちも `sleep_ms` によるポーリング
+
+## 設計メモ(Step 2)
+
+- 解像度 8x8、測距 15 Hz(8x8 の上限)。設定は ULD のとおり `set_resolution` → `set_ranging_frequency_hz` の順
+- 1 フレームの読み出しバイト数(ULD の `data_read_size`)は、有効な出力(距離・ステータス・sigma・ターゲット数)で 8x8 が 452 バイト、4x4 が 164 バイト(`tools/verification/estimate_ranging_read_time.py`。ULD の `vl53l8cx_start_ranging` と同じ計算)。I2C の転送は、アドレス等 4 バイト + 452 バイト = 456 バイト × 9 クロック / 399361 Hz = **10.3 ms 以上**(START / STOP と SDK のバイトごとの処理時間は含まない)。15 Hz の周期 66.7 ms の約 15%。データ待ちのポーリング(4 バイト読み)は 1 回 0.18 ms 以上
+- ゾーンの有効判定は「ターゲットなし(ターゲット数 0 またはステータス 255)→ ステータスが 5 / 9 以外 → sigma が上限超え」の順。sigma の上限は暫定 50 mm(`BOOTCAMP_SIGMA_MAX_MM`)
+- 表示は `src/depth_view.c` でバッファに組み立ててから 1 回で出す。必要なバッファの大きさは `DEPTH_VIEW_RENDER_BUF_SIZE`(3332 バイト = 行数の上限 13 × 1 行の上限 256 + 4)で、それより小さいバッファを渡すと何も書かない。行の上限 256 は、最長の行(8x8 カラーで全ゾーン無効、214 バイト)に余裕を持たせた値で、テストで全行がこれ以下であることを検査している
+- 距離画像の文字列は `stdio_put_string`(改行変換あり)で出す。printf の書式処理を通さない
+- USB への出力は、ターミナルが開いていない(DTR が立っていない)ときは捨てられる。ターミナルが開いていても受信側が読まない場合の SDK の動き(stdio_usb.c の stdio_usb_out_chars): 送信 FIFO に空きがない間は待ち、**最後に FIFO へ書けた時刻**(`last_avail_time`)から `PICO_STDIO_USB_STDOUT_TIMEOUT_US`(500 ms)を過ぎたら残りを捨てて戻る。つまり詰まり始めた最初の出力が最大 500 ms 止まり、その後の出力は(FIFO が空かない限り)待たずにすぐ捨てられる。止まっている間は測距データの読み出しも止まる
+- 描画時間(`draw`)の見積もりの前提: USB の送信 FIFO は 64 バイト(SDK の pico_stdio_usb の tusb_config.h の `CFG_TUD_CDC_TX_BUFSIZE`。RP2040 は Full Speed なので 64)。stdio_usb_out_chars は FIFO の空きぶんだけ書いては送信を促す(`tud_task` と `tud_cdc_write_flush`)ことを繰り返すので、1 フレーム(カラーで約 2 KB)は 64 バイト単位で 30 回程度に分けて送られ、ホストが読み取るたびに待つ。実際の値は実機のステータス行で測る
+- 1 文字コマンドは `getchar_timeout_us(0)` で読む。文字がなければすぐ戻り、USB 未接続でも止まらない(SDK の stdio.c の stdio_get_until と stdio_usb.c の stdio_usb_in_chars で確認。未接続時は入力元が何も読まずに戻り、期限は呼び出し時刻なので 1 周で抜ける)
+- 向きの目印は表示に固定し、反転フラグはゾーンをどこに描くかだけを変える(目印が反転に追従すると、どの反転でも同じ目印の側に同じゾーンが出て、向きを合わせられないため)
+- ステータス行・ヘルプ・凡例も `src/depth_view.c` で組み立て、各行が 80 桁以内であることを最長の値(フレーム番号やエラー数が uint32_t の最大、温度 −128、sigma 65535 など)でテストしている。分類ごとのゾーン数だけは 64 以下を前提にした桁数
+- フレームレートは、直近 15 フレームの間隔の合計時間から求める(1 フレームの間隔だとポーリング間隔 5 ms ぶん揺れるため)
+- キー処理とヘルプ表示の状態(反転・カラー・ヘルプの表示中)は `src/main.c` に置いている。c-pico-sdk.md は状態遷移を SDK 非依存のロジックに分けてテストするよう求めるが、状態が 3 つのフラグとヘルプの期限だけと小さいので例外とする(表示の組み立てと数値の計算は depth_view でテストしている)

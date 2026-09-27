@@ -25,14 +25,17 @@ endif
 
 FORMAT_FILES = $(wildcard include/*.h src/*.c tests/*.c)
 
-# uld_util.c だけをホストでビルドする(Pico SDK に依存しないため)
+# Pico SDK に依存しない uld_util.c / depth_view.c だけをホストでビルドする
 # TEST_SMALL: 分割書き込みの塊を小さくした構成。塊の長さを ULD_WRITE_CHUNK_BYTES から計算しているテストが
 #             定数を変えても追従することを確かめる
 TEST_DEFAULT = $(HOST_BUILD)/test_uld_util$(EXE)
 TEST_SMALL = $(HOST_BUILD)/test_uld_util_small$(EXE)
-TESTS = $(TEST_DEFAULT) $(TEST_SMALL)
+TEST_DEPTH = $(HOST_BUILD)/test_depth_view$(EXE)
+TESTS = $(TEST_DEFAULT) $(TEST_SMALL) $(TEST_DEPTH)
 TEST_SRCS = tests/test_uld_util.c src/uld_util.c $(UNITY_DIR)/unity.c
 TEST_DEPS = $(TEST_SRCS) include/uld_util.h
+DEPTH_SRCS = tests/test_depth_view.c src/depth_view.c src/uld_util.c $(UNITY_DIR)/unity.c
+DEPTH_DEPS = $(DEPTH_SRCS) include/depth_view.h include/uld_util.h
 
 .PHONY: all test format lint firmware clean
 
@@ -41,12 +44,16 @@ all: test
 test: $(TESTS)
 	./$(TEST_DEFAULT)
 	./$(TEST_SMALL)
+	./$(TEST_DEPTH)
 
 $(TEST_DEFAULT): $(TEST_DEPS) | $(HOST_BUILD)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRCS)
 
 $(TEST_SMALL): $(TEST_DEPS) | $(HOST_BUILD)
 	$(CC) $(CFLAGS) -DULD_WRITE_CHUNK_BYTES=7u -o $@ $(TEST_SRCS)
+
+$(TEST_DEPTH): $(DEPTH_DEPS) | $(HOST_BUILD)
+	$(CC) $(CFLAGS) -o $@ $(DEPTH_SRCS)
 
 $(HOST_BUILD):
 	mkdir -p $@
