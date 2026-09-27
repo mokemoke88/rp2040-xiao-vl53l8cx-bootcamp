@@ -13,9 +13,19 @@ import {
   setupCanvas,
 } from "./render.ts";
 import { ReplayPlayer, buildReplaySchedule, type ReplayTiming } from "./replay.ts";
+import { Scene3D, type Display3D, type Scene3DOptions } from "./scene3d.ts";
+import type { DistanceModel } from "./geometry.ts";
 import { SerialConnection, isWebSerialSupported, type SerialState } from "./serial.ts";
 import { INTERVAL_GAP_FACTOR, STREAM_REJECT_REASONS } from "./stats.ts";
-import { AutoRange, describeZone, firstTargets, minMax, zoneAt, type Range } from "./view.ts";
+import {
+  AutoRange,
+  describeZone,
+  firstTargets,
+  minMax,
+  zoneAt,
+  type ColorBy,
+  type Range,
+} from "./view.ts";
 
 /** id で要素を取り、型を実行時に確かめる(index.html と食い違ったら起動時に分かるようにする) */
 function el<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -48,6 +58,13 @@ const ui = {
   stats: el("stats", HTMLDListElement),
   status: el("status", HTMLDListElement),
   logs: el("logs", HTMLOListElement),
+  model3d: el("model3d", HTMLSelectElement),
+  display3d: el("display3d", HTMLSelectElement),
+  color3d: el("color3d", HTMLSelectElement),
+  invalid3d: el("invalid3d", HTMLInputElement),
+  reset3d: el("reset3d", HTMLButtonElement),
+  view3d: el("view3d", HTMLCanvasElement),
+  note3d: el("note3d", HTMLParagraphElement),
 };
 
 const ctx = {
@@ -83,6 +100,8 @@ interface AppState {
   signalRange: Range | null;
   spadRange: Range | null;
   imagesDirty: boolean;
+  /** 3D の点群の属性を書き換える必要があるか(データ・向き・3D の設定が変わった) */
+  sceneDirty: boolean;
   logsDirty: boolean;
   statusDirty: boolean;
 }
@@ -97,6 +116,7 @@ const state: AppState = {
   signalRange: null,
   spadRange: null,
   imagesDirty: true,
+  sceneDirty: true,
   logsDirty: true,
   statusDirty: true,
 };
@@ -133,6 +153,7 @@ function onMessage(message: Message): void {
       const spads = message.fields.nb_spads_enabled;
       state.spadRange = spads === undefined ? null : spadAutoRange.update(minMax(spads));
       state.imagesDirty = true;
+      state.sceneDirty = true;
       break;
     }
     case "status":
@@ -145,6 +166,7 @@ function onMessage(message: Message): void {
       state.lastStatusFlags = message.flags;
       state.statusDirty = true;
       state.imagesDirty = true;
+      state.sceneDirty = true;
       break;
     case "log":
       addLog({
@@ -171,6 +193,7 @@ function resetReception(): void {
   signalAutoRange.reset();
   spadAutoRange.reset();
   state.imagesDirty = true;
+  state.sceneDirty = true;
   state.statusDirty = true;
 }
 
@@ -339,8 +362,64 @@ ui.replayStop.addEventListener("click", () => {
 for (const input of [ui.flipH, ui.flipV, ui.showNumbers]) {
   input.addEventListener("change", () => {
     state.imagesDirty = true;
+    state.sceneDirty = true;
   });
 }
+
+// ---- 3D ----
+/** 3D ビュー。WebGL が使えない環境では null(注記に理由を出し、2D の表示は続ける) */
+/** 3D の注記の元の文(WebGL のコンテキストの状態を前に足すため) */
+const note3dText = ui.note3d.textContent;
+const scene3d: Scene3D | null = (() => {
+  try {
+    return new Scene3D(ui.view3d, (lost) => {
+      ui.note3d.textContent = lost
+        ? `WebGL のコンテキストが失われた(GPU のリセット等)。復帰を待っている。${note3dText}`
+        : note3dText;
+      browserLog(
+        lost ? 1 : 0,
+        lost ? "3D: WebGL のコンテキストが失われた" : "3D: WebGL のコンテキストが復帰した",
+      );
+    });
+  } catch (e) {
+    ui.note3d.textContent = `3D ビューを作れない(WebGL が使えない可能性): ${String(e)}`;
+    return null;
+  }
+})();
+
+function isDistanceModel(v: string): v is DistanceModel {
+  return v === "perpendicular" || v === "radial";
+}
+function isDisplay3D(v: string): v is Display3D {
+  return v === "points" || v === "patches";
+}
+function isColorBy(v: string): v is ColorBy {
+  return v === "distance" || v === "signal" || v === "spads";
+}
+
+/** 3D の設定を画面から読む(select の値は index.html の option と対応。想定外なら既定値) */
+function scene3dOptions(): Scene3DOptions {
+  const model = ui.model3d.value;
+  const display = ui.display3d.value;
+  const colorBy = ui.color3d.value;
+  return {
+    model: isDistanceModel(model) ? model : "perpendicular",
+    display: isDisplay3D(display) ? display : "points",
+    colorBy: isColorBy(colorBy) ? colorBy : "distance",
+    showInvalid: ui.invalid3d.checked,
+    orientation: orientation(),
+    ranges: { signal: state.signalRange, spads: state.spadRange },
+  };
+}
+
+for (const input of [ui.model3d, ui.display3d, ui.color3d, ui.invalid3d]) {
+  input.addEventListener("change", () => {
+    state.sceneDirty = true;
+  });
+}
+ui.reset3d.addEventListener("click", () => {
+  scene3d?.resetView();
+});
 
 for (const canvas of [ui.imgDistance, ui.imgSignal, ui.imgSpads]) {
   canvas.addEventListener("mousemove", (e) => {
@@ -475,6 +554,12 @@ function tick(nowMs: number): void {
     state.imagesDirty = false;
     renderImages();
   }
+  if (state.sceneDirty) {
+    state.sceneDirty = false;
+    scene3d?.update(state.latestFrame, scene3dOptions());
+  }
+  // データか 3D の設定かカメラが変わったときだけ描く
+  scene3d?.renderIfNeeded();
   if (state.statusDirty) {
     state.statusDirty = false;
     renderStatus();

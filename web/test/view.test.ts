@@ -2,15 +2,18 @@ import { describe, expect, it } from "vitest";
 import type { RangingFrame } from "../src/frame.ts";
 import {
   AutoRange,
+  blueRampColor,
   OUT_OF_RANGE_COLOR,
   classifyZone,
   describeZone,
   distanceColor,
   firstTargets,
+  grayColor,
   linearPosition,
   logPosition,
   minMax,
   zoneAt,
+  zoneValueColor,
 } from "../src/view.ts";
 
 describe("zoneAt", () => {
@@ -161,5 +164,50 @@ describe("firstTargets", () => {
   it("rejects an invalid T", () => {
     expect(() => firstTargets(new Uint32Array(4), 0)).toThrow(/targetsPerZone/);
     expect(() => firstTargets(new Uint32Array(4), 1.5)).toThrow(/targetsPerZone/);
+  });
+});
+
+describe("zoneValueColor", () => {
+  const f = frame4({
+    distance_mm: Int16Array.from({ length: 16 }, (_, i) => i * 100),
+    signal_per_spad: Uint32Array.from({ length: 16 }, (_, i) => 10 ** (1 + (i % 3))),
+    nb_spads_enabled: Uint32Array.from({ length: 16 }, (_, i) => 100 + i),
+  });
+  const ranges = { signal: { min: 10, max: 1000 }, spads: { min: 100, max: 115 } };
+
+  it("uses the same color functions as the 2D images", () => {
+    expect(zoneValueColor(f, 3, "distance", ranges)).toEqual(distanceColor(300));
+    expect(zoneValueColor(f, 0, "signal", ranges)).toEqual({ r: 0, g: 0, b: 0 });
+    expect(zoneValueColor(f, 2, "signal", ranges)).toEqual({ r: 255, g: 255, b: 255 });
+    expect(zoneValueColor(f, 1, "signal", ranges)?.r).toBeCloseTo(127.5);
+    expect(zoneValueColor(f, 15, "spads", ranges)).toEqual(blueRampColor(1));
+    expect(zoneValueColor(f, 0, "spads", ranges)).toEqual(blueRampColor(0));
+  });
+
+  it("returns null without the field or the range", () => {
+    expect(zoneValueColor(frame4({}), 0, "distance", ranges)).toBeNull();
+    expect(zoneValueColor(f, 0, "signal", { signal: null, spads: null })).toBeNull();
+    expect(zoneValueColor(f, 0, "spads", { signal: null, spads: null })).toBeNull();
+  });
+});
+
+describe("zoneValueColor with T = 2", () => {
+  // ターゲットごと(signal)は zone × T + 0、ゾーンごと(SPAD 数)は zone を使う
+  const f = frame4(
+    {
+      distance_mm: Int16Array.from({ length: 32 }, (_, i) => (i % 2 === 0 ? 100 : 1900)),
+      signal_per_spad: Uint32Array.from({ length: 32 }, (_, i) => (i % 2 === 0 ? 1000 : 10)),
+      nb_spads_enabled: Uint32Array.from({ length: 16 }, (_, i) => (i < 8 ? 100 : 200)),
+    },
+    2,
+  );
+  const ranges = { signal: { min: 10, max: 1000 }, spads: { min: 100, max: 200 } };
+
+  it("uses the first target for per-target fields and the zone for per-zone fields", () => {
+    expect(zoneValueColor(f, 5, "distance", ranges)).toEqual(distanceColor(100));
+    expect(zoneValueColor(f, 5, "signal", ranges)).toEqual(grayColor(1));
+    // zone 5 の SPAD 数は 100(添字 5)。ターゲットの添字(10)を使うと 200 になる
+    expect(zoneValueColor(f, 5, "spads", ranges)).toEqual(blueRampColor(0));
+    expect(zoneValueColor(f, 9, "spads", ranges)).toEqual(blueRampColor(1));
   });
 });

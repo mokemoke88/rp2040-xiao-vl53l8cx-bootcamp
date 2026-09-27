@@ -13,6 +13,7 @@ const pureModules = [
   "src/receiver.ts",
   "src/replay.ts",
   "src/view.ts",
+  "src/geometry.ts",
 ];
 
 export default defineConfig(

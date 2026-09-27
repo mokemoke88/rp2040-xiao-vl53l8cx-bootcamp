@@ -135,3 +135,20 @@ dd {
 .level-browser {
   color: var(--text-secondary);
 }
+
+.view3d {
+  margin-top: 16px;
+  display: inline-block;
+}
+
+.controls3d {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+#note3d {
+  max-width: 640px;
+}

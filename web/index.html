@@ -72,6 +72,47 @@
         </figure>
       </section>
 
+      <section class="panel view3d">
+        <h2>3D 点群(Step 4)</h2>
+        <div class="controls3d">
+          <label
+            >距離の解釈
+            <select id="model3d">
+              <option value="perpendicular">垂直距離(センサー面から)</option>
+              <option value="radial">半径(視線方向)</option>
+            </select>
+          </label>
+          <label
+            >表示
+            <select id="display3d">
+              <option value="points">点</option>
+              <option value="patches">ゾーンの広がり</option>
+            </select>
+          </label>
+          <label
+            >色
+            <select id="color3d">
+              <option value="distance">距離</option>
+              <option value="signal">signal_per_spad</option>
+              <option value="spads">nb_spads_enabled</option>
+            </select>
+          </label>
+          <label><input id="invalid3d" type="checkbox" /> 無効ゾーンも表示(半透明の灰色)</label>
+          <button id="reset3d" type="button">視点をリセット</button>
+        </div>
+        <canvas id="view3d"></canvas>
+        <p class="note" id="note3d">
+          座標はセンサーから外を見た向き: 赤 = x(センサーから見て右)、緑 = y(上)、青 = 前方。上の 2D
+          画像は「センサーを正面から見た図」なので、左右が逆に見える(2D の右上の zone 0 は、3D
+          では左上)。反転(h / v)は 2D と 3D で共通なので、3D の見た目を 2D に揃えようとして h
+          を切り替えると、両方が実物と合わなくなる。ドラッグで回転、ホイールでズーム(3D
+          ビューの上ではページはスクロールしない)、右ドラッグで移動。灰色の四角錐は視野(各軸 45°、4
+          m まで)、床のグリッドと輪は 0.5 m ごと(床はセンサーの 0.5 m 下と仮定)。各軸 45°
+          を採用しているが、このモデルの対角は約 60.7° で公称の対角 65°
+          と合わない(画角の定義は未確認)。ゾーンの方向は角度で等間隔と仮定している(未確認)。
+        </p>
+      </section>
+
       <section class="panels">
         <div class="panel">
           <h2>ゾーン</h2>

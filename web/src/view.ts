@@ -330,3 +330,50 @@ export function describeZone(frame: RangingFrame, zone: number): string[] {
   }
   return lines;
 }
+
+/** 3D の点・パッチの色に使う値 */
+export type ColorBy = "distance" | "signal" | "spads";
+
+/** 自動レンジの範囲(signal と SPAD 数。まだ値がなければ null) */
+export interface ColorRanges {
+  readonly signal: Range | null;
+  readonly spads: Range | null;
+}
+
+/**
+ * ゾーンの値の色(2D 画像と同じ色の関数)。距離は distanceColor、signal_per_spad は対数・自動レンジのグレースケール、
+ * nb_spads_enabled は線形・自動レンジの青のランプ。ゾーンの有効・無効は見ない(呼び出し側で決める)。
+ *
+ * @param frame - 測距フレーム
+ * @param zone - ゾーンの番号
+ * @param by - 色に使う値
+ * @param ranges - signal と SPAD 数の表示範囲
+ * @returns 色。フィールドがない・範囲がまだないときは null
+ */
+export function zoneValueColor(
+  frame: RangingFrame,
+  zone: number,
+  by: ColorBy,
+  ranges: ColorRanges,
+): Rgb | null {
+  const f = frame.fields;
+  const i = zone * frame.targetsPerZone;
+  switch (by) {
+    case "distance": {
+      const d = f.distance_mm?.[i];
+      return d === undefined ? null : distanceColor(d);
+    }
+    case "signal": {
+      const v = f.signal_per_spad?.[i];
+      return v === undefined || ranges.signal === null
+        ? null
+        : grayColor(logPosition(v, ranges.signal));
+    }
+    case "spads": {
+      const v = f.nb_spads_enabled?.[zone];
+      return v === undefined || ranges.spads === null
+        ? null
+        : blueRampColor(linearPosition(v, ranges.spads));
+    }
+  }
+}
