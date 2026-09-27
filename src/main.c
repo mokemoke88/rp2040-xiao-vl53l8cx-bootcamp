@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: MIT */
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #include "bootcamp_config.h"
 #include "depth_view.h"
+#include "frame_proto.h"
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
 #include "i2c_bus_recover.h"
@@ -25,6 +27,28 @@ _Static_assert(BOOTCAMP_RESOLUTION == VL53L8CX_RESOLUTION_4X4 || BOOTCAMP_RESOLU
 _Static_assert(BOOTCAMP_ZONE_SIDE <= DEPTH_VIEW_MAX_SIDE, "BOOTCAMP_ZONE_SIDE exceeds DEPTH_VIEW_MAX_SIDE");
 /* depth_view には ULD の結果の配列をそのまま渡し、添字をゾーン番号として扱う。1 ゾーン 1 ターゲットが前提 */
 _Static_assert(VL53L8CX_NB_TARGET_PER_ZONE == 1u, "depth_view expects one target per zone");
+
+/* バイナリの測距フレームも ULD の配列をそのまま渡す。ターゲット数は frame_proto の範囲内であること */
+_Static_assert(VL53L8CX_NB_TARGET_PER_ZONE <= FP_MAX_TARGETS, "too many targets per zone for frame_proto");
+
+/** @brief ファームウェアの版の文字列(起動ログと、バイナリの状態メッセージに入れる)。 */
+#define FIRMWARE_VERSION "xiao-vl53l8cx-bootcamp step3 (ULD " VL53L8CX_API_REVISION ")"
+
+/**
+ * @brief バイナリの測距フレームに含めるフィールド。platform.h で有効にしている ULD の出力(距離・ステータス・sigma・
+ *        ターゲット数・信号強度・有効 SPAD 数)すべて。
+ */
+#define BINARY_FIELD_MASK                                                                                              \
+  (FP_FIELD_DISTANCE | FP_FIELD_TARGET_STATUS | FP_FIELD_RANGE_SIGMA | FP_FIELD_NB_TARGET | FP_FIELD_SIGNAL |          \
+   FP_FIELD_NB_SPADS)
+
+/** @brief 出力の形式。 */
+typedef enum {
+  /** @brief テキスト(Step 2 の距離画像。人がターミナルで見る)。 */
+  OUTPUT_TEXT,
+  /** @brief バイナリ(docs/frame-format.md。ブラウザや記録用)。ANSI やテキストを一切混ぜない。 */
+  OUTPUT_BINARY,
+} output_mode_t;
 
 /** @brief フレームレートを求めるのに使う直近のフレーム数(この数の間隔の合計時間から計算する)。 */
 #define FPS_WINDOW 15u
@@ -84,6 +108,21 @@ static uint32_t ready_errors;
 
 /** @brief vl53l8cx_get_ranging_data() のエラーの累計。 */
 static uint32_t data_errors;
+
+/** @brief いまの出力の形式。起動時はテキスト。'b' / 't' で切り替える。 */
+static output_mode_t output_mode = OUTPUT_TEXT;
+
+/** @brief バイナリのメッセージのシーケンス番号(種別によらず送るたびに 1 増やす。起動から通しで、折り返す)。 */
+static uint32_t tx_seq;
+
+/** @brief I2C の実際のクロック [Hz](状態メッセージに入れる)。 */
+static uint32_t i2c_actual_hz;
+
+/** @brief バイナリのペイロード + CRC の組み立て先。 */
+static uint8_t tx_payload[FP_PAYLOAD_MAX + FP_CRC_BYTES];
+
+/** @brief USB シリアルに出す形(COBS + 区切りの 0x00)の組み立て先。 */
+static uint8_t tx_serial[FP_SERIAL_MAX];
 
 /**
  * @brief RGB LED の3色を消灯した状態で出力に設定する。
@@ -155,22 +194,6 @@ static void wait_usb_terminal(void) {
 }
 
 /**
- * @brief 失敗を表示して止まる。赤 LED を点け、失敗内容を一定間隔で表示し続ける(後からターミナルを開いても見られる)。
- * @param step 失敗した処理の名前
- * @param status ULD の関数が返したステータス
- */
-static void fail_forever(const char *step, uint8_t status) {
-  /* 緑を消して赤を点ける。gpio_put_masked は mask のピンだけを 1 回のレジスタ書き込みで変える(アクティブ Low なので
-     赤 = L、緑 = H) */
-  gpio_put_masked(PIN_BIT(BOOTCAMP_PIN_LED_RED) | PIN_BIT(BOOTCAMP_PIN_LED_GREEN), PIN_BIT(BOOTCAMP_PIN_LED_GREEN));
-  for (;;) {
-    printf("FAILED: %s status=%u (last_i2c_error=%d, i2c_error_count=%lu)\n", step, (unsigned)status,
-           dev.platform.last_i2c_error, (unsigned long)dev.platform.i2c_error_count);
-    sleep_ms(BOOTCAMP_FAIL_REPORT_INTERVAL_MS);
-  }
-}
-
-/**
  * @brief 文字列をそのまま USB CDC に出す。
  *
  * stdio_put_string は、有効な stdio の出力先すべてに文字列を送る。第 4 引数 true で "\n" を "\r\n" に変換する
@@ -180,6 +203,127 @@ static void fail_forever(const char *step, uint8_t status) {
  */
 static void put_text(const char *s) {
   stdio_put_string(s, -1, false, true);
+}
+
+/**
+ * @brief バイト列をそのまま USB CDC に出す(改行の変換をしない)。
+ *
+ * stdio_put_string の第 4 引数(cr_translation)が false なら、SDK は各出力先の out_chars にそのまま渡す
+ * (stdio.c の stdio_out_chars_no_crlf。"\n" を "\r\n" にする変換は cr_translation が true のときだけ)。
+ * 長さを引数で渡すので、0x00 を含んでいてもよい(len が -1 のときだけ strlen を使う)。
+ * @param data バイト列
+ * @param len バイト数
+ */
+static void put_raw(const uint8_t *data, size_t len) {
+  stdio_put_string((const char *)data, (int)len, false, false);
+}
+
+/**
+ * @brief tx_payload の先頭 len バイトのペイロードに CRC-32 を付け、COBS にして区切りの 0x00 と一緒に出す。
+ * @param len ペイロードのバイト数(0 なら何もしない)
+ */
+static void send_payload(size_t len) {
+  if (len == 0u) return;
+  const size_t with_crc = fp_append_crc32(tx_payload, len, sizeof tx_payload);
+  const size_t n = fp_cobs_frame(tx_serial, sizeof tx_serial, tx_payload, with_crc);
+  put_raw(tx_serial, n);
+  tx_seq++;
+}
+
+/**
+ * @brief ログを出す。テキストのときは 1 行の文字列、バイナリのときはログのメッセージ(種別 2)にする。
+ * @param level FP_LOG_*
+ * @param fmt printf の書式
+ */
+static void log_line(uint8_t level, const char *fmt, ...) {
+  char text[FP_LOG_TEXT_MAX + 1u];
+  va_list ap;
+  va_start(ap, fmt);
+  (void)vsnprintf(text, sizeof text, fmt, ap);
+  va_end(ap);
+  if (output_mode == OUTPUT_TEXT) {
+    printf("%s\n", text);
+    return;
+  }
+  send_payload(fp_build_log(tx_payload, FP_PAYLOAD_MAX, tx_seq, time_us_32(), level, text));
+}
+
+/** @brief 状態のメッセージ(種別 3)を送る。バイナリに入った直後と、反転を変えたときに送る。 */
+static void send_status(void) {
+  const fp_status_t s = {
+      .seq = tx_seq,
+      .timestamp_us = time_us_32(),
+      .side = BOOTCAMP_ZONE_SIDE,
+      .targets_per_zone = VL53L8CX_NB_TARGET_PER_ZONE,
+      .field_mask = BINARY_FIELD_MASK,
+      .ranging_hz = BOOTCAMP_RANGING_FREQ_HZ,
+      .flags = (uint8_t)((view.flip_h ? FP_STATUS_FLAG_FLIP_H : 0u) | (view.flip_v ? FP_STATUS_FLAG_FLIP_V : 0u)),
+      .i2c_hz = i2c_actual_hz,
+      .sensor_read_bytes = dev.data_read_size,
+      .firmware_version = FIRMWARE_VERSION,
+  };
+  send_payload(fp_build_status(tx_payload, FP_PAYLOAD_MAX, &s));
+}
+
+/**
+ * @brief 測距フレームのメッセージ(種別 1)を送る。
+ * @param timestamp_us データの準備を検出した時刻 [µs]
+ */
+static void send_frame(uint32_t timestamp_us) {
+  /* ULD の結果の配列をそのまま渡す(添字 = ゾーン × ターゲット数 + ターゲット。nb_target_detected と nb_spads_enabled はゾーンごと) */
+  const fp_frame_t f = {
+      .seq = tx_seq,
+      .timestamp_us = timestamp_us,
+      .side = BOOTCAMP_ZONE_SIDE,
+      .targets_per_zone = VL53L8CX_NB_TARGET_PER_ZONE,
+      .field_mask = BINARY_FIELD_MASK,
+      .temperature_c = results.silicon_temp_degc,
+      .distance_mm = results.distance_mm,
+      .target_status = results.target_status,
+      .range_sigma_mm = results.range_sigma_mm,
+      .nb_target_detected = results.nb_target_detected,
+      .signal_per_spad = results.signal_per_spad,
+      .nb_spads_enabled = results.nb_spads_enabled,
+  };
+  send_payload(fp_build_frame(tx_payload, FP_PAYLOAD_MAX, &f));
+}
+
+/**
+ * @brief バイナリの出力に切り替える。
+ *
+ * 最初に区切りの 0x00 を 1 つ出す。受信側はそれまでに届いたテキストの残りを 1 つの壊れたパケットとして捨て、
+ * 次のメッセージ(状態)から正しく区切れる(docs/frame-format.md の「モードの切り替え」)。
+ */
+static void enter_binary(void) {
+  const uint8_t delimiter = 0u;
+  output_mode = OUTPUT_BINARY;
+  put_raw(&delimiter, 1u);
+  send_status();
+}
+
+/** @brief テキストの表示に戻す。カラーなら次の描画で画面を消す。 */
+static void enter_text(void) {
+  output_mode = OUTPUT_TEXT;
+  clear_before_draw = true;
+  help_hold_until = get_absolute_time();
+  /* バイナリの途中で改行がないので、モノクロのときはここで改行してから表示を始める */
+  put_text("\n");
+}
+
+/**
+ * @brief 失敗を表示して止まる。赤 LED を点け、失敗内容を一定間隔で表示し続ける(後からターミナルを開いても見られる)。
+ * @param step 失敗した処理の名前
+ * @param status ULD の関数が返したステータス
+ */
+static void fail_forever(const char *step, uint8_t status) {
+  /* 緑を消して赤を点ける。gpio_put_masked は mask のピンだけを 1 回のレジスタ書き込みで変える(アクティブ Low なので
+     赤 = L、緑 = H) */
+  gpio_put_masked(PIN_BIT(BOOTCAMP_PIN_LED_RED) | PIN_BIT(BOOTCAMP_PIN_LED_GREEN), PIN_BIT(BOOTCAMP_PIN_LED_GREEN));
+  for (;;) {
+    log_line(FP_LOG_ERROR, "FAILED: %s status=%u (last_i2c_error=%d, i2c_error_count=%lu)", step, (unsigned)status,
+             dev.platform.last_i2c_error, (unsigned long)dev.platform.i2c_error_count);
+    sleep_ms(BOOTCAMP_FAIL_REPORT_INTERVAL_MS);
+  }
 }
 
 /** @brief キー操作と表示の読み方を出す(各行 80 桁以内。depth_view_help_text)。カラー表示では画面を消してから出す。 */
@@ -208,6 +352,36 @@ static uint32_t record_frame_time(uint64_t t_us) {
 }
 
 /**
+ * @brief バイナリの出力中に届いた 1 文字コマンドを処理する。テキストを出すコマンド('c'、'?')は無視する。
+ * @param c 文字
+ */
+static void handle_key_binary(int c) {
+  switch (c) {
+  case 't':
+  case 'T':
+    enter_text();
+    break;
+  case 'b':
+  case 'B':
+    /* もう一度 'b' が来たら(受信側がつなぎ直したなど)、区切りと状態を送り直す */
+    enter_binary();
+    break;
+  case 'h':
+  case 'H':
+    view.flip_h = !view.flip_h;
+    send_status();
+    break;
+  case 'v':
+  case 'V':
+    view.flip_v = !view.flip_v;
+    send_status();
+    break;
+  default:
+    break;
+  }
+}
+
+/**
  * @brief USB から届いた 1 文字コマンドをすべて処理する(待たない)。
  *
  * getchar_timeout_us(0) は、SDK の stdio_get_until で各入力元を 1 回ずつ調べ、文字がなければ期限(呼び出した時刻)を
@@ -218,6 +392,10 @@ static uint32_t record_frame_time(uint64_t t_us) {
 static void handle_keys(void) {
   int c;
   while ((c = getchar_timeout_us(0)) >= 0) {
+    if (output_mode == OUTPUT_BINARY) {
+      handle_key_binary(c);
+      continue;
+    }
     /* ヘルプの表示中に何か押されたら、表示を再開する(画面を消してから描く) */
     if (!time_reached(help_hold_until)) clear_before_draw = true;
     help_hold_until = get_absolute_time();
@@ -239,6 +417,10 @@ static void handle_keys(void) {
         /* モノクロに切り替えたら色を戻して改行だけ出す(以後は ANSI エスケープを出さない) */
         put_text(ANSI_RESET "\n");
       }
+      break;
+    case 'b':
+    case 'B':
+      enter_binary();
       break;
     case '?':
       print_help();
@@ -292,10 +474,11 @@ int main(void) {
   /* stdio_init_all は、CMake で有効にした stdio の出力先(このファームは USB CDC だけ)を初期化する */
   stdio_init_all();
   wait_usb_terminal();
-  printf("\nxiao-vl53l8cx-bootcamp step 2 (ULD %s)\n", VL53L8CX_API_REVISION);
+  printf("\n%s\n", FIRMWARE_VERSION);
 
   i2c_bus_recover_result_t recover;
   const uint actual_hz = sensor_pins_init(&recover);
+  i2c_actual_hz = actual_hz;
   printf("I2C bus recovery: %u clocks, STOP %s, SDA=%d SCL=%d\n", recover.clocks,
          recover.stop_sent ? "sent" : "not sent", (int)recover.sda_high, (int)recover.scl_high);
   printf("I2C1 %u Hz (requested %u Hz)\n", actual_hz, (unsigned)BOOTCAMP_I2C_BAUDRATE_HZ);
@@ -344,7 +527,8 @@ int main(void) {
       /* I2C の失敗か、センサーが返したエラー(GO2 のステータス)。表示して続ける(カラー表示では次の描画で消えるので、
          累計をステータス行にも出す) */
       ready_errors++;
-      printf("check_data_ready error: status=%u (last_i2c_error=%d)\n", (unsigned)status, dev.platform.last_i2c_error);
+      log_line(FP_LOG_WARN, "check_data_ready error: status=%u (last_i2c_error=%d)", (unsigned)status,
+               dev.platform.last_i2c_error);
       sleep_ms(100);
       continue;
     }
@@ -362,7 +546,13 @@ int main(void) {
     if (status != VL53L8CX_STATUS_OK) {
       data_errors++;
       /* VL53L8CX_STATUS_CORRUPTED_FRAME(2)はヘッダとフッタの ID が食い違ったフレーム */
-      printf("frame %lu: get_ranging_data error: status=%u\n", (unsigned long)frame_no, (unsigned)status);
+      log_line(FP_LOG_WARN, "frame %lu: get_ranging_data error: status=%u", (unsigned long)frame_no, (unsigned)status);
+      continue;
+    }
+
+    if (output_mode == OUTPUT_BINARY) {
+      /* バイナリ: 測距フレームを送るだけ。テキストの描画はしない。タイムスタンプは起動からの µs の下位 32 bit */
+      send_frame((uint32_t)t_ready);
       continue;
     }
 

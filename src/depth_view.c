@@ -343,6 +343,7 @@ size_t depth_view_render(char *buf, size_t buf_size, const depth_view_frame_t *f
 /** @brief ヘルプの本文。各行 DEPTH_VIEW_COLS_MAX 桁以内(テストで検査する)。 */
 static const char HELP_TEXT[] = "keys: h = flip left/right, v = flip up/down\n"
                                 "      c = color/mono, ? = this help (upper case also works)\n"
+                                "      b = binary output (for the browser), t = back to text\n"
                                 "frame edges: hold the sensor facing you, 9pin row on your left.\n"
                                 "  9pin / 4pin = carrier pin rows, up / down = as you hold it\n"
                                 "zone0 (status line) = display corner where sensor zone 0 is drawn\n"

@@ -32,16 +32,14 @@
 
 /*
  * 測距結果のうち使わない出力を無効にする。定義した項目は VL53L8CX_ResultsData から消え、I2C で読むデータも減る。
- * 残すもの: 距離(distance_mm)、測距ステータス(target_status)、sigma(range_sigma_mm)、ターゲット数(nb_target_detected)。
+ * 残すもの: 距離(distance_mm)、測距ステータス(target_status)、sigma(range_sigma_mm)、ターゲット数(nb_target_detected)、
+ * 信号強度(signal_per_spad。Step 3 でブラウザの「IR 画像」に使う)、有効 SPAD 数(nb_spads_enabled。Step 3 で
+ * signal_per_spad と並べて見せる)。
  * ターゲット数を残すのは、ULD がターゲットのないゾーンの target_status を 255 にする処理がこの出力を使うため
  * (vl53l8cx_get_ranging_data の VL53L8CX_DISABLE_NB_TARGET_DETECTED で囲まれた部分)。
  */
 /** @brief 周囲光(ambient_per_spad)を出力しない。 */
 #define VL53L8CX_DISABLE_AMBIENT_PER_SPAD
-/** @brief 有効 SPAD 数(nb_spads_enabled)を出力しない。 */
-#define VL53L8CX_DISABLE_NB_SPADS_ENABLED
-/** @brief 信号強度(signal_per_spad)を出力しない。 */
-#define VL53L8CX_DISABLE_SIGNAL_PER_SPAD
 /** @brief 反射率の推定値(reflectance)を出力しない。 */
 #define VL53L8CX_DISABLE_REFLECTANCE_PERCENT
 /** @brief 動き検出(motion_indicator)を出力しない。 */

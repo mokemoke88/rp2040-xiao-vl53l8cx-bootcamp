@@ -25,19 +25,25 @@ endif
 
 FORMAT_FILES = $(wildcard include/*.h src/*.c tests/*.c)
 
-# Pico SDK に依存しない uld_util.c / depth_view.c だけをホストでビルドする
+# Pico SDK に依存しない uld_util.c / depth_view.c / frame_proto.c だけをホストでビルドする
 # TEST_SMALL: 分割書き込みの塊を小さくした構成。塊の長さを ULD_WRITE_CHUNK_BYTES から計算しているテストが
 #             定数を変えても追従することを確かめる
 TEST_DEFAULT = $(HOST_BUILD)/test_uld_util$(EXE)
 TEST_SMALL = $(HOST_BUILD)/test_uld_util_small$(EXE)
 TEST_DEPTH = $(HOST_BUILD)/test_depth_view$(EXE)
-TESTS = $(TEST_DEFAULT) $(TEST_SMALL) $(TEST_DEPTH)
+TEST_PROTO = $(HOST_BUILD)/test_frame_proto$(EXE)
+TESTS = $(TEST_DEFAULT) $(TEST_SMALL) $(TEST_DEPTH) $(TEST_PROTO)
 TEST_SRCS = tests/test_uld_util.c src/uld_util.c $(UNITY_DIR)/unity.c
 TEST_DEPS = $(TEST_SRCS) include/uld_util.h
 DEPTH_SRCS = tests/test_depth_view.c src/depth_view.c src/uld_util.c $(UNITY_DIR)/unity.c
 DEPTH_DEPS = $(DEPTH_SRCS) include/depth_view.h include/uld_util.h
+PROTO_SRCS = tests/test_frame_proto.c src/frame_proto.c $(UNITY_DIR)/unity.c
+PROTO_DEPS = $(PROTO_SRCS) include/frame_proto.h tests/frame_vectors.h
 
-.PHONY: all test format lint firmware clean
+# テストベクタ(docs/frame-vectors.json と tests/frame_vectors.h)を作るスクリプトと、記録の検証スクリプト
+PYTHON = python
+
+.PHONY: all test vectors format lint firmware clean
 
 all: test
 
@@ -45,6 +51,9 @@ test: $(TESTS)
 	./$(TEST_DEFAULT)
 	./$(TEST_SMALL)
 	./$(TEST_DEPTH)
+	./$(TEST_PROTO)
+	$(PYTHON) tools/gen_frame_vectors.py --check
+	$(PYTHON) tools/verification/decode_capture.py --self-test
 
 $(TEST_DEFAULT): $(TEST_DEPS) | $(HOST_BUILD)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRCS)
@@ -54,6 +63,13 @@ $(TEST_SMALL): $(TEST_DEPS) | $(HOST_BUILD)
 
 $(TEST_DEPTH): $(DEPTH_DEPS) | $(HOST_BUILD)
 	$(CC) $(CFLAGS) -o $@ $(DEPTH_SRCS)
+
+$(TEST_PROTO): $(PROTO_DEPS) | $(HOST_BUILD)
+	$(CC) $(CFLAGS) -Itests -o $@ $(PROTO_SRCS)
+
+# テストベクタを作り直す(tools/gen_frame_vectors.py を変えたとき)
+vectors:
+	$(PYTHON) tools/gen_frame_vectors.py
 
 $(HOST_BUILD):
 	mkdir -p $@

@@ -20,6 +20,7 @@ pico_sdk_init()
 set(BOOTCAMP_SOURCES
   src/main.c
   src/depth_view.c
+  src/frame_proto.c
   src/i2c_bus_recover.c
   src/platform.c
   src/uld_util.c

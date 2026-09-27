@@ -42,13 +42,12 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 |---|---|---|---|
 | 1. 測距 | ULD ドライバを移植し、4x4 の距離を USB シリアルに printf | 配線、I2C、ULD のプラットフォーム層、センサーへのファームウェア転送 | 完了(2026-09-27。ゾーンの向きの確認は Step 2 に持ち越し) |
 | 2. 距離画像 | 8x8 / 15 Hz にし、測距ステータスと sigma で無効ゾーンを除く。ターミナルに文字でヒートマップを出す | 解像度とレートの関係、測距データの信頼性 | 完了(2026-09-27) |
-| 3. PC ヒートマップ | フレームをバイナリで送り(同期ヘッダ + 長さ + CRC)、ブラウザでリアルタイムにヒートマップ表示 | シリアルのフレーム設計、Web Serial | 未着手 |
+| 3. PC ヒートマップ | フレームをバイナリで送り(COBS + CRC-32。形式は [docs/frame-format.md](docs/frame-format.md))、ブラウザでリアルタイムにヒートマップ表示(距離と signal_per_spad の「IR 画像」) | シリアルのフレーム設計、Web Serial | 進行中(形式の仕様・テストベクタ・ファームウェアは実装済み・実機未確認。ブラウザ側は未着手) |
 | 4. 点群 | ゾーンの方向と距離から XYZ に変換し、three.js で 3D 点群表示(視点を回せる) | ToF の幾何(画角とゾーン中心の方向) | 未着手 |
 | 5. 最終デモ | 「LiDAR 風ビュー」: 3D 点群 + 真上から見た扇形の 2D スキャン表示(列ごとの最近距離)+ 残像 + 動いたものの強調 | まとめ | 未着手 |
 
 ## 未決事項
 
-- シリアルのフレーム形式の詳細(Step 3 で決める)
 - ブラウザ側の構成(ビルドなしの素の ES Modules か、バンドラを使うか)と、それに対応する開発規約。`rules/develop/` に該当するものがまだない
 
 ## 対象と開発環境
@@ -63,9 +62,12 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 
 ## ドキュメント
 
-- [tests/CASES.md](tests/CASES.md) — ホストで単体テストする部分(`src/uld_util.c`、`src/depth_view.c`)の入力と期待値、変異テストの結果
+- [docs/frame-format.md](docs/frame-format.md) — PC へ送るバイナリメッセージの形式(版 1)。ペイロード、CRC-32、COBS、受信側が拒否する条件、モードの切り替え
+- [docs/frame-vectors.json](docs/frame-vectors.json) — 形式のテストベクタ(`tools/gen_frame_vectors.py` が生成。C と Python のデコーダ、ブラウザ側のテストが使う)
+- [tests/CASES.md](tests/CASES.md) — ホストで単体テストする部分(`src/uld_util.c`、`src/depth_view.c`、`src/frame_proto.c`)の入力と期待値、変異テストの結果
 - `tools/verification/verify_depth_view_expected_values.py` — depth_view のテストの期待値(距離の段階の境界、4x4 の表示文字列)の検算
-- `tools/verification/estimate_ranging_read_time.py` — 1 フレームの読み出しバイト数と I2C の転送時間の見積もり(下記「設計メモ(Step 2)」)
+- `tools/verification/estimate_ranging_read_time.py` — 1 フレームの読み出しバイト数と I2C の転送時間の見積もり(下記「設計メモ(Step 2)」「設計メモ(Step 3)」)
+- `tools/verification/decode_capture.py` — USB シリアルの記録をデコードして統計を出す(C とは別に書いたデコーダ。テストベクタで自己検査する)
 - [third_party/vl53l8cx_uld/README.md](third_party/vl53l8cx_uld/README.md) — ULD の出どころと差し替えたファイル
 
 ## ビルド・書き込み
@@ -74,6 +76,7 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 
 - ファームウェア: `PICO_SDK_PATH`(Pico SDK 2.3.1)、Arm GNU Toolchain(`arm-none-eabi-gcc`)、CMake、Ninja。picotool はビルド済みのものを `picotool_DIR` で指定しておく
 - ホスト側のテスト・整形: `gcc`、`make`(Windows では w64devkit で確認)、`clang-format`
+- Python 3(`make test` がテストベクタの確認とデコーダの自己検査に使う)。記録ツールは pyserial が要る(リポジトリルートの `.venv` に入っている。`make` の `PYTHON` 変数で別の python を指定できる)
 
 ### コマンド
 
@@ -83,7 +86,10 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 |---|---|
 | `make format` | clang-format で整形(`include/` `src/` `tests/` のみ。`third_party/` は対象外) |
 | `make lint` | 整形済みか検査(差分があれば失敗) |
-| `make test` | `src/uld_util.c` と `src/depth_view.c` をホストの gcc でビルドし、Unity のテストを実行。uld_util は分割書き込みの塊の長さを既定(256)と 7 の 2 構成でビルドして両方実行する。成果物は `build-host/` |
+| `make test` | `src/uld_util.c` / `src/depth_view.c` / `src/frame_proto.c` をホストの gcc でビルドし、Unity のテストを実行。uld_util は分割書き込みの塊の長さを既定(256)と 7 の 2 構成でビルドして両方実行する。続けて、テストベクタが生成スクリプトと一致するか(`gen_frame_vectors.py --check`)と、デコーダの自己検査(`decode_capture.py --self-test`)を行う。成果物は `build-host/` |
+| `make vectors` | テストベクタ(`docs/frame-vectors.json`、`tests/frame_vectors.h`)を作り直す(`tools/gen_frame_vectors.py` を変えたとき) |
+| `python tools/capture_serial.py --port COM7 --seconds 5 --out capture.bin` | バイナリの出力を記録する(開いた後に `b` を送り、終わったら `t` を送ってテキストに戻す。DTR を立てて開く。Ctrl-C で止めてもそれまでの記録を書き出す) |
+| `python tools/verification/decode_capture.py capture.bin` | 記録をデコードして統計(メッセージ数、fps、フレーム間隔の最小・最大、seq の欠落・後退、CRC / COBS などの拒否の数)を出す。`--show N` で先頭 N フレームの中身も出す。自己検査は、テストベクタ(メッセージ、拒否すべきバイト列、複数メッセージを連結したストリームの統計)と、仕様書に手で書いた 16 進の例との一致を確かめる |
 | `python tools/verification/verify_depth_view_expected_values.py` | depth_view のテストの期待値を出力する(テストに書いた値と照合する) |
 | `python tools/verification/estimate_ranging_read_time.py` | 4x4 / 8x8 の 1 フレームの読み出しバイト数と I2C の転送時間の見積もりを出力する |
 | `make firmware` | `cmake -S . -B build -G Ninja -DPICO_BOARD=seeed_xiao_rp2040` + `cmake --build build`。`build/xiao_vl53l8cx_bootcamp.uf2` ができる |
@@ -114,6 +120,10 @@ Pololu VL53L8CX キャリア(#3419)のピン名は基板のシルクどおり。
 | `v` / `V` | 上下反転を切り替える |
 | `c` / `C` | カラー(ANSI 256 色、画面を上書き)とモノクロ(ANSI エスケープなし、流れる)を切り替える |
 | `?` | ヘルプを表示する(約 5 秒、または何かキーを押すまで距離画像の表示を止める) |
+| `b` / `B` | バイナリの出力に切り替える(ブラウザや記録用。[docs/frame-format.md](docs/frame-format.md))。ターミナルでは読めない文字が流れる |
+| `t` / `T` | バイナリからテキストの表示に戻す |
+
+バイナリの出力中は `h` / `v` / `b` / `t` だけが効く(`h` / `v` は反転を変えて状態メッセージを送り直す)。`c` / `?` は無視する。起動ログやエラーはログのメッセージ(種別 2)で送り、ANSI エスケープやテキストは混ぜない。
 
 起動時はカラー表示、左右反転あり・上下反転なし(h=1 v=0。下記「表示の読み方」の向きの確定値)。カラー表示では、起動後最初の描画・`c` でカラーに切り替えたとき・ヘルプの後に、画面全体を消し(`ESC[2J`)、以後はカーソルを左上に戻して(`ESC[H`)上書きする。各行の末尾で `ESC[K`、ステータス行の後で `ESC[J` を出し、前の表示の残りを消す。
 
@@ -152,11 +162,19 @@ sigma of status-ok zones: median 19 max 80 limit 50 | keys h v c ?
 - ステータス行 4: ステータスが有効なゾーン(sigma で除く前)の sigma の中央値・最大と上限。sigma の上限を調整する目安にする
 - 起動時のログはカラー表示の最初の描画で画面から消える。見たいときは PuTTY のスクロールバックを遡るか、モノクロ(`c`)に切り替えてからリセットする(serial-read でログを取る場合も同じ。ただし起動直後はカラーなので、ログには ANSI エスケープが入る)
 - 初期化に失敗すると赤 LED が点き、`FAILED: <処理> status=<値> (last_i2c_error=..., i2c_error_count=...)` を 2 秒ごとに表示し続ける。測距が始まると緑 LED が点く
-- 起動時のログ(`I2C bus recovery`、`I2C1 ... Hz`、`sensor alive`、`init done in ... ms`、`ranging 8x8 @ 15 Hz, N bytes per frame`)は Step 1 と同じ。`I2C1 ... Hz` は既定の clk_sys 125 MHz で 399361 Hz(SDK の i2c_set_baudrate の計算: period = (125000000 + 200000) / 400000 = 313 クロック、125000000 / 313 = 399361)。`N bytes per frame` は 8x8 で 452 の見込み(下記「設計メモ(Step 2)」)
+- 起動時のログ(`I2C bus recovery`、`I2C1 ... Hz`、`sensor alive`、`init done in ... ms`、`ranging 8x8 @ 15 Hz, N bytes per frame`)は Step 1 と同じ。`I2C1 ... Hz` は既定の clk_sys 125 MHz で 399361 Hz(SDK の i2c_set_baudrate の計算: period = (125000000 + 200000) / 400000 = 313 クロック、125000000 / 313 = 399361)。`N bytes per frame` は Step 3 で signal_per_spad と nb_spads_enabled を足したので 8x8 で 972 の見込み(下記「設計メモ(Step 3)」。上の例の 452 は Step 2 の値)
 
 ### 実機で確認すること
 
 確認済みと書いているのは、ユーザーから報告があった範囲だけ。
+
+#### Step 3(ファームウェア。未実施)
+
+- テキスト表示が Step 2 と同じように動き、ステータス行 2 の `B/frame` が 972、fps が 15 前後のままであること(signal_per_spad と nb_spads_enabled を足した読み出しが 15 Hz に間に合うか)
+- `read` の値。見積もりは I2C の転送だけで 22.0 ms 以上、Step 2 の実測との比で約 27.0 ms(下記「設計メモ(Step 3)」)
+- `tools/capture_serial.py` で `b` を送って数秒記録し、`tools/verification/decode_capture.py` で全メッセージが拒否なし・シーケンスの欠落なしでデコードでき、最初に状態メッセージ、以後 15 fps 前後の測距フレームが並ぶこと
+- バイナリの出力中に `t` でテキストに戻ること、`h` / `v` で状態メッセージが送り直されること
+- 記録を止めたまま(ホストが読まない状態で)しばらく置いた後、読み始めると回復すること(下記「ホストが読まないとき」)
 
 #### Step 2
 
@@ -215,21 +233,32 @@ include/
   bootcamp_config.h       ピン番号、I2C のクロック、解像度・測距の頻度、sigma の上限、表示の既定値などの設定
   depth_view.h            距離画像の表示(ゾーンの有効判定、反転、距離の段階化、sigma の統計、文字列の組み立て)
   i2c_bus_recover.h       I2C バスの復旧(SCL の手動クロックと STOP)
+  frame_proto.h           バイナリメッセージの組み立て、CRC-32、COBS(docs/frame-format.md の実装)
   platform.h              ULD のプラットフォーム層(ULD が固定名で include する。出力の有効・無効もここで決める)
   uld_util.h              プラットフォーム層の SDK 非依存の部分(バイト順の入れ替え、分割書き込みのループ、タイムアウト、ステータス判定)
 src/
   main.c                  初期化(USB CDC、LPn、I2C バス復旧、I2C1)→ ULD の初期化 → 8x8 の測距結果をポーリングして距離画像を表示、1 文字コマンド
   depth_view.c            depth_view.h の実装(stdint.h / stdbool.h / stddef.h と uld_util.h だけに依存。ホストでテストする)
+  frame_proto.c           frame_proto.h の実装(stdint.h / stdbool.h / stddef.h だけに依存。ホストでテストする)
   i2c_bus_recover.c       i2c_bus_recover.h の実装(GPIO でオープンドレインを模して操作)
   platform.c              VL53L8CX_RdByte / WrByte / RdMulti / WrMulti / WaitMs / SwapBuffer / Reset_Sensor の RP2040 実装
   uld_util.c              uld_util.h の実装(stdint.h / stdbool.h だけに依存。ホストでテストする)
 tests/
   test_uld_util.c         uld_util の単体テスト(Unity)
   test_depth_view.c       depth_view の単体テスト(Unity)
+  test_frame_proto.c      frame_proto の単体テスト(Unity。テストベクタとの一致も検査)
+  frame_vectors.h         docs/frame-vectors.json と同じ内容の C の配列(tools/gen_frame_vectors.py が生成。手で編集しない)
   CASES.md                テストの入力と期待値の対応表
+docs/
+  frame-format.md         バイナリメッセージの形式(版 1)
+  frame-vectors.json      形式のテストベクタ(生成物)
+tools/
+  gen_frame_vectors.py    テストベクタを作る(仕様どおりの参照用エンコーダ。--check で一致だけ確かめる)
+  capture_serial.py       USB シリアルをバイナリにして記録する(pyserial)
 tools/verification/
   verify_depth_view_expected_values.py  depth_view のテストの期待値の検算
   estimate_ranging_read_time.py         読み出しバイト数と I2C の転送時間の見積もり
+  decode_capture.py                     記録のデコードと統計(テストベクタで自己検査する)
 third_party/
   vl53l8cx_uld/           ST の VL53L8CX ULD 2.0.0(BSD-3-Clause。改変しない)
   unity/                  Unity(MIT)
@@ -245,7 +274,7 @@ third_party/
 - 読み出しは「レジスタアドレスを nostop で書く → RESTART → 読む」の 1 トランザクション。書き込みはレジスタアドレスとデータを 1 回の書き込みにまとめる(Pico SDK は nostop の次の書き込みの最初のバイトに RESTART ビットを立てるため。ビットを立てることは SDK のソースで確認、バス上の波形は未確認)。ファームウェア転送(1 回 0x8000 バイト)に備えて 256 バイトずつに分割し、塊ごとにレジスタアドレスを付け直して送る(`uld_write_chunked`。途中の塊が失敗したら残りは送らない)。センサーのアドレス自動インクリメントが前提で、ファームウェア転送が通ったことを実機で確認した。通らなくなった場合の代替は 0x8000 + 2 バイトの静的バッファで 1 トランザクションにすること(RAM 264 KB に対して 32 KB)
 - SDK の `i2c_write_burst_blocking`(RESTART を付けずに続けて書ける)は、タイムアウト付きの版がないので使わない
 - I2C 関数はタイムアウト付き(`i2c_*_timeout_us`)を使う。タイムアウトは 10 ms + 転送バイト数 × 100 µs。失敗したら ULD には 255 を返し、SDK の戻り値を `last_i2c_error` に残す
-- 測距結果の出力は距離・測距ステータス・sigma・ターゲット数だけを有効にしている(`include/platform.h`)。ターゲット数は、ULD がターゲットなしのゾーンのステータスを 255 にするのに使う
+- 測距結果の出力は距離・測距ステータス・sigma・ターゲット数だけを有効にしている(`include/platform.h`。Step 3 で signal_per_spad と nb_spads_enabled を追加)。ターゲット数は、ULD がターゲットなしのゾーンのステータスを 255 にするのに使う
 - SDA / SCL / INT / LPn の内蔵プルダウン(RP2040 のリセット既定)は外す。プルアップはキャリア基板側にある
 - 起動時に I2C バスを復旧してから I2C1 を使い始める(`src/i2c_bus_recover.c`)。測距中に MCU だけがリセットされると、センサーが読み出しの途中で SDA を Low に保持したままになりうる。SDK の I2C 関数はタイムアウトしても abort も STOP もしない(i2c.c)ので、そのままでは is_alive で止まる。SDA / SCL を GPIO にして、SDA が Low の間 SCL を最大 9 回クロックし、SDA が High になったら STOP を出す。手動クロックは約 100 kHz(半周期 5 µs)で、SCL を離した後は最大 1 ms まで High になるのを待つ(クロックストレッチ対策)
 - ULD との境界(`VL53L8CX_WaitMs` の `sleep_ms`、`vl53l8cx_init` などの ULD の関数)はブロッキングを許容する。ULD がブロッキングで書かれているため、c-pico-sdk.md の「待ちはブロッキングにしない」の例外とする。メインループのデータ待ちも `sleep_ms` によるポーリング
@@ -253,14 +282,30 @@ third_party/
 ## 設計メモ(Step 2)
 
 - 解像度 8x8、測距 15 Hz(8x8 の上限)。設定は ULD のとおり `set_resolution` → `set_ranging_frequency_hz` の順
-- 1 フレームの読み出しバイト数(ULD の `data_read_size`)は、有効な出力(距離・ステータス・sigma・ターゲット数)で 8x8 が 452 バイト、4x4 が 164 バイト(`tools/verification/estimate_ranging_read_time.py`。ULD の `vl53l8cx_start_ranging` と同じ計算)。I2C の転送は、アドレス等 4 バイト + 452 バイト = 456 バイト × 9 クロック / 399361 Hz = **10.3 ms 以上**(START / STOP と SDK のバイトごとの処理時間は含まない)。15 Hz の周期 66.7 ms の約 15%。データ待ちのポーリング(4 バイト読み)は 1 回 0.18 ms 以上
+- 1 フレームの読み出しバイト数(ULD の `data_read_size`)は、**Step 2 時点の**有効な出力(距離・ステータス・sigma・ターゲット数)で 8x8 が 452 バイト、4x4 が 164 バイト(`tools/verification/estimate_ranging_read_time.py` と同じ計算。スクリプトは Step 3 で出力を足したので、いまは 972 / 300 バイトを出す。下記「設計メモ(Step 3)」)。I2C の転送は、アドレス等 4 バイト + 452 バイト = 456 バイト × 9 クロック / 399361 Hz = **10.3 ms 以上**(START / STOP と SDK のバイトごとの処理時間は含まない)。15 Hz の周期 66.7 ms の約 15%。データ待ちのポーリング(4 バイト読み)は 1 回 0.18 ms 以上
 - ゾーンの有効判定は「ターゲットなし(ターゲット数 0 またはステータス 255)→ ステータスが 5 / 9 以外 → sigma が上限超え」の順。sigma の上限は暫定 50 mm(`BOOTCAMP_SIGMA_MAX_MM`)
 - 表示は `src/depth_view.c` でバッファに組み立ててから 1 回で出す。必要なバッファの大きさは `DEPTH_VIEW_RENDER_BUF_SIZE`(3332 バイト = 行数の上限 13 × 1 行の上限 256 + 4)で、それより小さいバッファを渡すと何も書かない。行の上限 256 は、最長の行(8x8 カラーで全ゾーン無効、214 バイト)に余裕を持たせた値で、テストで全行がこれ以下であることを検査している
 - 距離画像の文字列は `stdio_put_string`(改行変換あり)で出す。printf の書式処理を通さない
-- USB への出力は、ターミナルが開いていない(DTR が立っていない)ときは捨てられる。ターミナルが開いていても受信側が読まない場合の SDK の動き(stdio_usb.c の stdio_usb_out_chars): 送信 FIFO に空きがない間は待ち、**最後に FIFO へ書けた時刻**(`last_avail_time`)から `PICO_STDIO_USB_STDOUT_TIMEOUT_US`(500 ms)を過ぎたら残りを捨てて戻る。つまり詰まり始めた最初の出力が最大 500 ms 止まり、その後の出力は(FIFO が空かない限り)待たずにすぐ捨てられる。止まっている間は測距データの読み出しも止まる
+- USB への出力は、ターミナルが開いていない(DTR が立っていない)ときは捨てられる。開いていても読むのが遅い・止まっている場合の動きは「設計メモ(Step 3)」の「ホストが読まないとき」を参照(テキストでもバイナリでも同じ)
 - 描画時間(`draw`)の見積もりの前提: USB の送信 FIFO は 64 バイト(SDK の pico_stdio_usb の tusb_config.h の `CFG_TUD_CDC_TX_BUFSIZE`。RP2040 は Full Speed なので 64)。stdio_usb_out_chars は FIFO の空きぶんだけ書いては送信を促す(`tud_task` と `tud_cdc_write_flush`)ことを繰り返すので、1 フレーム(カラーで約 2 KB)は 64 バイト単位で 30 回程度に分けて送られ、ホストが読み取るたびに待つ。実際の値は実機のステータス行で測る
 - 1 文字コマンドは `getchar_timeout_us(0)` で読む。文字がなければすぐ戻り、USB 未接続でも止まらない(SDK の stdio.c の stdio_get_until と stdio_usb.c の stdio_usb_in_chars で確認。未接続時は入力元が何も読まずに戻り、期限は呼び出し時刻なので 1 周で抜ける)
 - 向きの目印は表示に固定し、反転フラグはゾーンをどこに描くかだけを変える(目印が反転に追従すると、どの反転でも同じ目印の側に同じゾーンが出て、向きを合わせられないため)
 - ステータス行・ヘルプ・凡例も `src/depth_view.c` で組み立て、各行が 80 桁以内であることを最長の値(フレーム番号やエラー数が uint32_t の最大、温度 −128、sigma 65535 など)でテストしている。分類ごとのゾーン数だけは 64 以下を前提にした桁数
 - フレームレートは、直近 15 フレームの間隔の合計時間から求める(1 フレームの間隔だとポーリング間隔 5 ms ぶん揺れるため)
 - キー処理とヘルプ表示の状態(反転・カラー・ヘルプの表示中)は `src/main.c` に置いている。c-pico-sdk.md は状態遷移を SDK 非依存のロジックに分けてテストするよう求めるが、状態が 3 つのフラグとヘルプの期限だけと小さいので例外とする(表示の組み立てと数値の計算は depth_view でテストしている)
+
+## 設計メモ(Step 3)
+
+- 形式は [docs/frame-format.md](docs/frame-format.md) が正。ペイロードは経路に依存せず(将来 XIAO ESP32-C3 で WebSocket / UDP に載せるときも同じペイロード + CRC-32)、USB シリアルだけ COBS で包んで 0x00 で区切る
+- signal_per_spad(ブラウザの「IR 画像」)と nb_spads_enabled(ゾーンごとの有効 SPAD 数。signal_per_spad と並べて、受光側の設定がゾーンごとに変わるかを見せる)を有効にした(`VL53L8CX_DISABLE_SIGNAL_PER_SPAD` と `VL53L8CX_DISABLE_NB_SPADS_ENABLED` を外した)。1 フレームの読み出しは 8x8 で 452 → **972 バイト**(signal +260、SPAD 数 +260。`tools/verification/estimate_ranging_read_time.py`)。I2C の転送は (4 + 972) バイト × 9 クロック / 399361 Hz = **22.0 ms 以上**。Step 2 の実測(452 バイトで 12.63 ms、見積もり 10.28 ms の 1.23 倍)と同じ比なら **約 27.0 ms**。15 Hz の周期 66.7 ms の約 40% で、テキストの描画(Step 2 の実測 2〜3 ms)やバイナリの送信を足しても周期に収まる見込み
+- ULD の内部バッファ(`temp_buffer`)は 1024 バイトで、有効な出力から決まる最大(`VL53L8CX_MAX_RESULTS_SIZE` = 40 + 260 + 68 + 260 + 132 + 132 + 68 + 20 = 980)より大きいので、972 バイトの読み出しが収まる
+- テストベクタは `tools/gen_frame_vectors.py`(Python で書いた参照用のエンコーダ)が `docs/frame-vectors.json` と `tests/frame_vectors.h` に同じ内容で出す。C のテストは同じ入力から C で組み立てたバイト列が一致することを、`tools/verification/decode_capture.py`(別に書いたデコーダ。CRC は zlib)は JSON をデコードして期待値と一致すること・不正なバイト列を理由どおりに拒否することを確かめる。`make test` はベクタが生成スクリプトと一致するかも確かめる
+- バイナリは `stdio_put_string(data, len, false, false)` で出す。第 4 引数 `cr_translation` が false なら、SDK は出力先の `out_chars` にそのまま渡す(stdio.c の `stdio_out_chars_no_crlf`。"\n" → "\r\n" の変換は `stdio_out_chars_crlf` の中だけで、`cr_translation` が true のときにしか呼ばれない)。長さを渡すので 0x00 も送れる(len が -1 のときだけ strlen を使う)
+- バイナリの出力中は printf を使わない。ログは `log_line()` がモードを見て、テキストなら 1 行、バイナリならログのメッセージ(種別 2)にする
+- `b` を受けたら、まず 0x00 を 1 バイト送ってから状態メッセージを送る。受信側は最初の 0x00 までを捨てるので、それまでに届いていたテキスト表示の残りと混ざらない
+- 1 フレームは USB 上で最大 923 バイト(ペイロード 914 + CRC 4 を COBS にして最大 922 + 区切り 1)。15 Hz で約 13.8 KB/s。USB の送信 FIFO は 64 バイトなので、1 フレームは 15 回程度に分けて FIFO に書かれる(`stdio_usb_out_chars` が空きの分だけ書いては送信を促すことを繰り返す)
+- **ホストが読まないとき**: SDK の stdio_usb_out_chars(stdio_usb.c)は、送信 FIFO に空きがない間は待ち、**最後に FIFO へ書けた時刻**(`last_avail_time`。少しでも書けるたびに更新する)から `PICO_STDIO_USB_STDOUT_TIMEOUT_US`(500 ms)を過ぎたら、そのメッセージの残りを捨てて戻る。待っている間は測距ループも止まる。ホストの状態で結果が分かれる
+  - **完全に止まったホスト**(ポートを開いたまま読み取りを止めた): 詰まり始めに **1 回だけ最大 500 ms** 止まる(その間の約 7 フレームはセンサー側で上書きされ、読まれない)。以後は FIFO が空かないので、各メッセージが待たずに捨てられ、測距は続く。読み取りを再開すると、そのとき書き始めたメッセージの途中からが届くことがあり、受信側では COBS / CRC の拒否と seq の欠落として見える
+  - **遅いホスト**(読むが約 13.8 KB/s に追いつかない): FIFO に書けるたびに `last_avail_time` が更新されるので捨てられず、FIFO が満杯になるたびに最大 500 ms まで待つ。**測距ループが繰り返し止まり、その間のセンサーのフレームは読まれない**。メッセージが作られないので seq は飛ばない。この取りこぼしは、測距フレームの timestamp の間隔(15 Hz で約 66.7 ms。取りこぼすとその倍数に近くなる)で分かる([docs/frame-format.md](docs/frame-format.md) の「シーケンス番号」「送信側の制約」)
+  - ポートを閉じた(DTR が落ちた): SDK は未接続とみなして待たずに捨てるので止まらない
+- 状態メッセージの flags はファームウェアの表示の反転(既定 h=1 v=0)。ブラウザ側は描画の反転の初期値に使える

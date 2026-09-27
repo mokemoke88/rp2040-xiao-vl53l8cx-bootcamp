@@ -4,16 +4,18 @@
 
 - `tests/test_uld_util.c` → `src/uld_util.c`(プラットフォーム層の計算)。前半の各節
 - `tests/test_depth_view.c` → `src/depth_view.c`(距離画像の表示)。「depth_view」の節
+- `tests/test_frame_proto.c` → `src/frame_proto.c`(バイナリメッセージ、CRC-32、COBS)。「frame_proto」の節
 
 ## ビルド構成
 
-`make test` は次の 3 つを実行する。
+`make test` は次の 4 つを実行し、続けてテストベクタの確認(`tools/gen_frame_vectors.py --check`)と Python のデコーダの自己検査(`tools/verification/decode_capture.py --self-test`)を行う。
 
 | 実行ファイル | 構成 |
 |---|---|
 | `build-host/test_uld_util` | 既定(分割書き込みの塊 `ULD_WRITE_CHUNK_BYTES` = 256) |
 | `build-host/test_uld_util_small` | `-DULD_WRITE_CHUNK_BYTES=7u`。0x8000 などの長さが塊の長さで割り切れない場合を通す |
 | `build-host/test_depth_view` | depth_view のテスト(uld_util.c も一緒にリンクする。ステータスの判定を再利用しているため) |
+| `build-host/test_frame_proto` | frame_proto のテスト(`tests/frame_vectors.h` を読む) |
 
 - 塊の長さに関わる期待値は `CHUNK`(= `ULD_WRITE_CHUNK_BYTES`)から計算している。塊の数は ⌈size / CHUNK⌉
 - タイムアウトの期待値は `ULD_I2C_TIMEOUT_BASE_US`(10000)と `ULD_I2C_TIMEOUT_PER_BYTE_US`(100)から計算している
@@ -222,3 +224,84 @@ size = 3 × CHUNK + 1(4 塊)、先頭アドレス 0x0000。k 番目(0 始まり)
 | ステータス行の fps の頭打ちをなくす | status_worst_case_fits_80_columns |
 | 凡例を長くする("blank=no target at all") | render_mono_4x4_exact、render_fits_80_columns |
 | 範囲外の色を 17 に戻す | render_color_out_of_range |
+
+## frame_proto
+
+テストベクタ(`FV_COBS`、`FV_MESSAGES`、`FV_CRC32_CHECK`)は `tests/frame_vectors.h` にあり、`docs/frame-vectors.json` と同じ内容を `tools/gen_frame_vectors.py`(Python で書いた参照用のエンコーダ)が生成したもの。C の実装と Python の実装が同じバイト列を作ることを検査している。形式の定義は `docs/frame-format.md`。
+
+どのテストも、出力先の後ろ 16 バイトを 0xA5 で埋めておき、容量の外を書かないことを確かめている(check_canary)。
+
+### CRC-32
+
+| テスト | 入力 | 期待値 |
+|---|---|---|
+| crc32_check_value | ASCII `123456789` | 0xCBF43926(= ベクタの `crc32_check`) |
+| crc32_empty_and_single | 空 / `00` | 0x00000000 / 0xD202EF8D |
+| append_crc32_little_endian | `123456789` の後ろに付ける(容量 13) | 戻り値 13、`26 39 F4 CB`。容量 12 / 3 では 0 を返し何も書かない |
+
+### COBS
+
+| テスト | 入力 | 期待値 |
+|---|---|---|
+| cobs_vectors_encode | ベクタ 13 個(空、`00`、`00 00`、途中の 0、0 なし、末尾の 0 が続く、253 / 254 / 255 / 508 / 509 バイトの非ゼロ、`00` + 254、254 + `00`) | ベクタの `encoded_hex` と一致、出力に 0x00 がない |
+| cobs_vectors_decode | 同じベクタの符号化 | `decoded_hex` に戻る(容量ちょうど) |
+| cobs_max_length_bound | 0x42 だけの入力、長さ 0 / 1 / 253 / 254 / 255 / 507 / 508 / 509 / 662 / 2646(FP_PAYLOAD_MAX + 4) | 長さ = n + ⌈n/254⌉(n = 0 は 1)で FP_COBS_MAX(n) 以下。FP_SERIAL_MAX が最大のパケット + 区切りを収める |
+| cobs_encode_rejects_small_buffer | 4 バイト、容量 FP_COBS_MAX(4) − 1 | 0 を返し何も書かない |
+| cobs_decode_rejects_invalid | 空 / `05 11 22`(コードが終わりを越える)/ `03 11 00`(途中に 0)/ `02 11 00 22`(コードが 0) | すべて false |
+| cobs_decode_accepts_trailing_01 | `FF 01 … FE 01`(正規でない符号化) | 254 バイトの `01 … FE` |
+| cobs_decode_rejects_small_buffer | `zero_in_middle`、容量 3 | false |
+| cobs_frame_appends_delimiter | `11 00 22` | `02 11 02 22 00`。容量 FP_COBS_MAX(3)(区切りの分が足りない)では 0 |
+
+### メッセージ(テストベクタ)
+
+| テスト | 入力 | 期待値 |
+|---|---|---|
+| message_vectors_match | ベクタ 8 個(4x4 全フィールド(0x3F)、8x8 全フィールド、4x4 距離とステータスだけ、4x4 で 2 ターゲット、8x8 で 4 ターゲットの全フィールド(最大長 2642 バイト)、ログ 2 個(210 文字を 200 に切り詰め)、状態)の入力を C で組み立てる | ペイロード・CRC・USB シリアルのバイト列がベクタと一致。測距フレームは fp_frame_payload_len とも一致。区切りの手前までを COBS デコードするとペイロード + CRC に戻る |
+| message_exact_capacity | 同じ 8 個、容量 = 期待する長さ − 1 / ちょうど | 前者は 0 で何も書かない、後者は書ける |
+
+### 組み立ての入力検査
+
+| テスト | 入力 | 期待値 |
+|---|---|---|
+| frame_rejects_bad_shape | 8x8 全フィールド(0x3F)を基準に、side 5 / ターゲット数 0 / 5 / マスク 0x40(予約) | 基準は 18 + 64 × 14 = 914 バイト、ほかは 0。fp_frame_payload_len(8, 1, 0x8000) も 0 |
+| frame_rejects_missing_array | signal の配列が NULL / マスクを 0x0F(signal と SPAD 数を外す)/ SPAD 数の配列が NULL / 距離の配列が NULL | 0 / 18 + 64 × 6 = 402 / 0 / 0 |
+| frame_max_payload_fits | 8x8、4 ターゲット、全フィールド | FP_FRAME_PAYLOAD_MAX(2642)ちょうど |
+| log_replaces_non_printable | `a TAB b DEL ESC [ 0 m c`(9 バイト)、警告 | 長さ 9、本文 `a?b??[0mc` |
+| log_rejects_bad_level | level 3 | 0 |
+| status_rejects_bad_input | 基準(8x8、マスク 0x3F、flags 0x03)/ flags 0x04 / マスク 0x40 / side 6 | 27 + 2 / 0 / 0 / 0 |
+| status_truncates_version | 版の文字列 73 バイト | 64 バイトに切り詰め(長さのバイトも 64) |
+
+### 検出力の確認(frame_proto)
+
+`src/frame_proto.c` に次の変異を 1 つずつ入れて、どれも検出されることを確認した(2026-09-27)。
+
+| 変異 | 検出したテスト |
+|---|---|
+| CRC の初期値を 0 にする | crc32_check_value ほか |
+| CRC の最終 XOR をなくす | crc32_check_value ほか |
+| COBS で 254 バイトのブロックで終わるときも 0x01 を足す | cobs_vectors_encode、cobs_max_length_bound |
+| COBS のブロックを 253 バイトで区切る | cobs_vectors_encode、cobs_max_length_bound |
+| COBS エンコードの容量検査をなくす | cobs_encode_rejects_small_buffer |
+| COBS デコードでデータ中の 0x00 を受け付ける | cobs_decode_rejects_invalid |
+| COBS デコードでブロックの後ろに 0x00 を補わない | cobs_vectors_decode ほか |
+| COBS デコードで最後のブロックの後ろにも 0x00 を補う | cobs_vectors_decode ほか |
+| 測距フレームの予約バイトを 1 にする | message_vectors_match |
+| ターゲット数(ゾーンごと)をターゲットごとの個数だけ書く | message_vectors_match ほか |
+| 有効 SPAD 数(ゾーンごと)をターゲットごとの個数だけ書く | message_vectors_match ほか |
+| ペイロード長の計算で有効 SPAD 数をターゲットごとに数える | message_vectors_match ほか |
+| 有効 SPAD 数を u16 で書く | message_vectors_match ほか |
+| 有効 SPAD 数の配列の NULL の検査をなくす | テストが異常終了(NULL の参照) |
+| ペイロード長の計算でターゲット数をターゲットごとに数える | message_vectors_match ほか |
+| side を 4〜8 すべて許す | frame_rejects_bad_shape、status_rejects_bad_input |
+| フィールドマスクの予約ビットの検査をなくす | frame_rejects_bad_shape、status_rejects_bad_input |
+| signal の配列の NULL の検査をなくす | テストが異常終了(NULL の参照) |
+| ログの文字の置き換えをなくす | log_replaces_non_printable |
+| ログの level の検査をなくす | log_rejects_bad_level |
+| 状態の flags の検査をなくす | status_rejects_bad_input |
+| CRC をビッグエンディアンで付ける | append_crc32_little_endian、message_vectors_match |
+| fp_append_crc32 の容量の境界を 1 ずらす | append_crc32_little_endian |
+
+Python のデコーダ(`tools/verification/decode_capture.py`)の自己検査は、`messages` のデコード結果、`invalid` の拒否の理由、`streams` の統計(`analyze()` の結果。受け付けた数・拒否の理由別の数・欠落・後退・先頭で捨てたバイト数など)、仕様書に手で書いた 16 進の例(`<!-- example:... -->` のブロック)とベクタの一致を確かめる。
+
+Python のデコーダにも、CRC の検査・測距フレームの予約バイトの検査・長さの一致の検査・状態の flags の検査をなくす変異、COBS の最後のブロックの後ろに 0x00 を補う変異、ターゲット数をターゲットごとに数える変異を入れ、どれも自己検査(`--self-test`)が失敗することを確認した(2026-09-27)。
+追加で(2026-09-27)、拒否したパケットで prev をリセットする・後退を数えない・長さ 0 のパケットを拒否として扱う・後退のとき prev を更新しない、の各変異が `streams` の統計の不一致で、仕様書の例の 1 バイトを変える変異が例の検査で、それぞれ自己検査の失敗になることを確認した。
