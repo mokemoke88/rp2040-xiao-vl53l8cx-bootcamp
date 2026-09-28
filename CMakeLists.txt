@@ -20,10 +20,11 @@ pico_sdk_init()
 # 測距モードの切り替え(既定は ULD の既定値と同じ autonomous / 積分 5 ms。docs/design-notes.md の「設計メモ(測距の設定)」)
 option(BOOTCAMP_RANGING_CONTINUOUS "Use continuous ranging mode instead of autonomous" OFF)
 set(BOOTCAMP_INTEGRATION_TIME_MS 5 CACHE STRING "Integration time in autonomous mode [ms] (2-1000)")
-# 1 ゾーンあたりのターゲット数(ULD の VL53L8CX_NB_TARGET_PER_ZONE。docs/design-notes.md の「設計メモ(1 ゾーン 2 ターゲット)」)
-set(BOOTCAMP_TARGETS_PER_ZONE 1 CACHE STRING "Targets per zone (1-4)")
-# ターゲットの順(既定は ULD の既定値と同じ strongest)
-option(BOOTCAMP_TARGET_ORDER_CLOSEST "Report the closest target first instead of the strongest" OFF)
+# 1 ゾーンあたりのターゲット数(ULD の VL53L8CX_NB_TARGET_PER_ZONE)とターゲットの順。既定は 2 / closest で、手前の対象と
+# 奥の壁を同じゾーンで捉える(docs/design-notes.md の「設計メモ(1 ゾーン 2 ターゲット)」)。
+# キャッシュ変数なので、既にある build ディレクトリでは前の値が残る。変えるときは CMAKE_ARGS で明示する
+set(BOOTCAMP_TARGETS_PER_ZONE 2 CACHE STRING "Targets per zone (1-4)")
+option(BOOTCAMP_TARGET_ORDER_CLOSEST "Report the closest target first instead of the strongest" ON)
 
 # 自作のソース
 set(BOOTCAMP_SOURCES

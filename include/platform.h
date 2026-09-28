@@ -26,11 +26,12 @@
 /**
  * @brief 1 ゾーンあたりに報告するターゲット数(1〜4)。
  *
- * ULD はこの値で測距結果の配列の大きさと、センサーに設定する出力の形式を決める。既定は 1。CMake のキャッシュ変数
- * BOOTCAMP_TARGETS_PER_ZONE で変えられる(CMake が compile definition で ULD のソースにも同じ値を渡す)。
+ * ULD はこの値で測距結果の配列の大きさと、センサーに設定する出力の形式を決める。既定は 2(手前の対象と奥の壁を同じ
+ * ゾーンで捉えるため)。CMake のキャッシュ変数 BOOTCAMP_TARGETS_PER_ZONE で変えられる(CMake が compile definition で
+ * ULD のソースにも同じ値を渡す。ここの既定値は CMake を通さない場合のためのもので、CMake の既定と揃えている)。
  */
 #ifndef VL53L8CX_NB_TARGET_PER_ZONE
-#define VL53L8CX_NB_TARGET_PER_ZONE 1U
+#define VL53L8CX_NB_TARGET_PER_ZONE 2U
 #endif
 
 /*

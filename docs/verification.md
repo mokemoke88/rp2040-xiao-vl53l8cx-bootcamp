@@ -4,6 +4,8 @@
 
 ## 1 ゾーン 2 ターゲット(`-DBOOTCAMP_TARGETS_PER_ZONE=2`)
 
+2026-09-28、以下の確認の後に T = 2 / closest を既定にした。既定の構成でビルドした uf2 は、下の closest の確認に使った uf2 とバイト単位で同じ。
+
 見積もりは [design-notes.md](design-notes.md) の「設計メモ(1 ゾーン 2 ターゲット)」。2026-09-28、実機で確認した範囲を各項目に書いた(バイナリは `tools/capture_serial.py` で 6 秒、テキストは 4 秒の記録)。
 
 - 起動ログの `ranging 8x8 @ 15 Hz, 2 target(s) per zone, N bytes per frame` の N が 1548 であること

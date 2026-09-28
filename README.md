@@ -75,7 +75,9 @@ make firmware
 
 `cmake -S . -B build -G Ninja -DPICO_BOARD=seeed_xiao_rp2040` と `cmake --build build` を実行し、`build/xiao_vl53l8cx_bootcamp.uf2` ができる(CMake を直接使う場合も `-DPICO_BOARD=seeed_xiao_rp2040` を必ず指定する)。
 
-測距モードは既定で autonomous(積分時間 5 ms。ULD の既定値と同じ)。`make firmware BUILD_DIR=build-continuous CMAKE_ARGS=-DBOOTCAMP_RANGING_CONTINUOUS=ON` で continuous、`CMAKE_ARGS=-DBOOTCAMP_INTEGRATION_TIME_MS=15` で積分時間を変えられる([docs/design-notes.md](docs/design-notes.md) の「設計メモ(測距の設定)」)。1 ゾーンあたりのターゲット数(既定 1)は `CMAKE_ARGS=-DBOOTCAMP_TARGETS_PER_ZONE=2` のように 1〜4 で変えられる(同じく「設計メモ(1 ゾーン 2 ターゲット)」)。ターゲットの順は既定で strongest(信号の強い順)で、`-DBOOTCAMP_TARGET_ORDER_CLOSEST=ON` で closest(近い順)にできる。
+測距モードは既定で autonomous(積分時間 5 ms。ULD の既定値と同じ)。`make firmware BUILD_DIR=build-continuous CMAKE_ARGS=-DBOOTCAMP_RANGING_CONTINUOUS=ON` で continuous、`CMAKE_ARGS=-DBOOTCAMP_INTEGRATION_TIME_MS=15` で積分時間を変えられる([docs/design-notes.md](docs/design-notes.md) の「設計メモ(測距の設定)」)。
+
+1 ゾーンあたりのターゲット数は既定で 2、ターゲットの順は既定で closest(近い順)。手前の対象と奥の壁が同じゾーンに入っても両方を報告させ、表示(先頭のターゲットを描く)には手前を出すため。`CMAKE_ARGS="-DBOOTCAMP_TARGETS_PER_ZONE=1 -DBOOTCAMP_TARGET_ORDER_CLOSEST=OFF"` で ULD の既定(1 ターゲット、strongest = 信号の強い順)に戻せる。ターゲット数は 1〜4(同じく「設計メモ(1 ゾーン 2 ターゲット)」)。これらは CMake のキャッシュ変数なので、既にある build ディレクトリでは前の値が残る。変えるときは `CMAKE_ARGS` で明示するか、build ディレクトリを作り直す。
 
 1. XIAO の B(BOOT)ボタンを押しながら USB で PC に接続する(または接続中に B を押したまま R を押して離す)
 2. `RPI-RP2` ドライブが現れるので、`build/xiao_vl53l8cx_bootcamp.uf2` をコピーする。コピーが終わると自動で再起動する

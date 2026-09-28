@@ -73,13 +73,14 @@
 /**
  * @brief ターゲットの順を closest(近い順)にするなら 1、strongest(信号の強い順)にするなら 0。
  *
- * 既定の 0(strongest)は ULD の既定値と同じ(UM3109 Rev 12。実機の読み返しでも strongest、2026-09-28)。
+ * 既定は 1(closest)。ULD の既定値は strongest(UM3109 Rev 12。実機の読み返しでも strongest、2026-09-28)だが、
  * 1 ゾーンに 2 ターゲット以上を報告させると、strongest では先頭が手前とは限らない(手をかざした場面で、2 つとも
- * 有効な 309 件のうち 104 件は奥の壁が先頭だった。2026-09-28、実機で確認)。表示は先頭のターゲットを描くので、
- * 手前を描きたいときは 1 にする。CMake の BOOTCAMP_TARGET_ORDER_CLOSEST オプションで切り替える。
+ * 有効な 309 件のうち 104 件は奥の壁が先頭だった。closest では 385 件すべてで手前が先頭。2026-09-28、実機で確認)。
+ * 表示は先頭のターゲットを描くので、手前を描くために closest にしている。CMake の BOOTCAMP_TARGET_ORDER_CLOSEST
+ * オプションで切り替える(ここの既定値は CMake を通さない場合のためのもので、CMake の既定と揃えている)。
  */
 #ifndef BOOTCAMP_TARGET_ORDER_CLOSEST
-#define BOOTCAMP_TARGET_ORDER_CLOSEST 0
+#define BOOTCAMP_TARGET_ORDER_CLOSEST 1
 #endif
 
 /**

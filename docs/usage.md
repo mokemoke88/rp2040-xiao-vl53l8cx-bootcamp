@@ -66,8 +66,8 @@ sigma of status-ok zones: median 19 max 80 limit 50 | keys h v c ?
 - ステータス行 4: ステータスが有効なゾーン(sigma で除く前)の sigma の中央値・最大と上限。sigma の上限を調整する目安にする
 - 起動時のログはカラー表示の最初の描画で画面から消える。見たいときは PuTTY のスクロールバックを遡るか、モノクロ(`c`)に切り替えてからリセットする(スクリプトなどでログを取る場合も同じ。ただし起動直後はカラーなので、ログには ANSI エスケープが入る)
 - 初期化に失敗すると赤 LED が点き、`FAILED: <処理> status=<値> (last_i2c_error=..., i2c_error_count=...)` を 2 秒ごとに表示し続ける。測距が始まると緑 LED が点く
-- 起動時のログ(`I2C bus recovery`、`I2C1 ... Hz`、`sensor alive`、`init done in ... ms`、`ranging 8x8 @ 15 Hz, 1 target(s) per zone, N bytes per frame`)は Step 1 と同じ(ターゲット数は 2026-09-28 に追加)。`I2C1 ... Hz` は既定の clk_sys 125 MHz で 399361 Hz(SDK の i2c_set_baudrate の計算: period = (125000000 + 200000) / 400000 = 313 クロック、125000000 / 313 = 399361)。`N bytes per frame` は Step 3 で signal_per_spad と nb_spads_enabled を足したので 8x8 で 972(1 ゾーン 2 ターゲットでは 1548)の見込み([design-notes.md](design-notes.md) の「設計メモ(Step 3)」。上の例の 452 は Step 2 の値)
-- `ranging` の行の直前に、センサーから読み返した測距の設定の行(`sensor: mode autonomous, integration 5 ms, sharpener N%, order strongest`)が出る。モードと積分時間は CMake のオプションで変えられる([design-notes.md](design-notes.md) の「設計メモ(測距の設定)」)
+- 起動時のログ(`I2C bus recovery`、`I2C1 ... Hz`、`sensor alive`、`init done in ... ms`、`ranging 8x8 @ 15 Hz, 2 target(s) per zone, N bytes per frame`)は Step 1 と同じ(ターゲット数は 2026-09-28 に追加)。`I2C1 ... Hz` は既定の clk_sys 125 MHz で 399361 Hz(SDK の i2c_set_baudrate の計算: period = (125000000 + 200000) / 400000 = 313 クロック、125000000 / 313 = 399361)。`N bytes per frame` は Step 3 で signal_per_spad と nb_spads_enabled を足したので 8x8 で 972。既定の 1 ゾーン 2 ターゲットでは 1548(実機で確認、2026-09-28)([design-notes.md](design-notes.md) の「設計メモ(Step 3)」。上の例の 452 は Step 2 の値)
+- `ranging` の行の直前に、センサーから読み返した測距の設定の行(`sensor: mode autonomous, integration 5 ms, sharpener 1%, order closest`)が出る。モード・積分時間・ターゲットの順は CMake のオプションで変えられる([design-notes.md](design-notes.md) の「設計メモ(測距の設定)」)
 
 ## ブラウザで表示する(web/、Step 3)
 
@@ -117,7 +117,7 @@ three を入れたことで、ビルドの JS は約 28 kB から約 586 kB(gzip
 - **距離**: 有効なゾーンは近 = 赤 → 黄 → 緑 → 遠 = 青(0〜2000 mm。Step 2 のターミナル表示と同じ考え方で、段階ではなく連続の色)。2000 mm 超は暗い紫。無効なゾーンは灰色の濃淡で、記号 `x` = ステータスが 5 / 9 以外、`?` = sigma が 50 mm 超、記号なし = ターゲットなし(判定の順も Step 2 と同じ)。「距離の数値」で有効なゾーンに mm の値を重ねる
 - **signal_per_spad(IR 画像)**: グレースケール(黒 = 弱い、白 = 強い)。値の幅が広いので対数スケールで、範囲はフレームの最小・最大(0 を除く)に自動で追従する(広がるときはすぐ、狭まるときはゆっくり)。無効なゾーンも値のまま描く
 - **nb_spads_enabled**: 青の濃淡(暗い = 少ない、明るい = 多い)。線形・自動レンジ
-- 各画像の下に単位と凡例(色の帯と範囲)。T が 2 以上のフレームは最初のターゲットを描く
+- 各画像の下に単位と凡例(色の帯と範囲)。T が 2 以上のフレームは最初のターゲットを描く(ファームの既定は T = 2 / closest なので、最初のターゲットは手前のもの。奥の壁などの 2 つ目はツールチップで見られる)
 - 画像にマウスを乗せると、カーソルのそばのツールチップに、そのゾーンの全フィールド(全ターゲットの距離・ステータス・sigma・signal、ターゲット数、SPAD 数)を出す。乗せたゾーンは、ほかの図(2D 画像・レクチャー A / B の画像・LiDAR 風ビューとレクチャー C の扇形)でも白い枠で示す。ツールチップは画面の右端・下端でははみ出さないよう左・上に反転し、全画面でも出る。マウスが図から出たら消える(タッチ操作には対応していない)。対象の図の一覧は下の「ゾーンの値(マウスを乗せる)」の欄と、「最終デモ(Step 5)」に書いた
 - 「受信」の欄: 受信 fps(ブラウザが受け取った頻度)、送信側 fps(タイムスタンプの間隔から)、種別ごとの受信数、seq の欠落(回数と個数)・後退、測距フレームの間隔の異常(状態メッセージの頻度から求めた周期の 1.5 倍超。センサー側の取りこぼしは seq に現れないのでこれで見る)、理由別の拒否の数、捨てたバイト数、温度
 - 「状態メッセージ」の欄: ファームウェアの版、解像度、field_mask、測距の頻度、反転、I2C クロック、1 フレームの読み出しバイト数
