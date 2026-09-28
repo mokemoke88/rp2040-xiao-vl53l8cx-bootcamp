@@ -22,6 +22,8 @@ option(BOOTCAMP_RANGING_CONTINUOUS "Use continuous ranging mode instead of auton
 set(BOOTCAMP_INTEGRATION_TIME_MS 5 CACHE STRING "Integration time in autonomous mode [ms] (2-1000)")
 # 1 ゾーンあたりのターゲット数(ULD の VL53L8CX_NB_TARGET_PER_ZONE。docs/design-notes.md の「設計メモ(1 ゾーン 2 ターゲット)」)
 set(BOOTCAMP_TARGETS_PER_ZONE 1 CACHE STRING "Targets per zone (1-4)")
+# ターゲットの順(既定は ULD の既定値と同じ strongest)
+option(BOOTCAMP_TARGET_ORDER_CLOSEST "Report the closest target first instead of the strongest" OFF)
 
 # 自作のソース
 set(BOOTCAMP_SOURCES
@@ -55,10 +57,16 @@ if(BOOTCAMP_RANGING_CONTINUOUS)
 else()
   set(BOOTCAMP_RANGING_CONTINUOUS_VALUE 0)
 endif()
+if(BOOTCAMP_TARGET_ORDER_CLOSEST)
+  set(BOOTCAMP_TARGET_ORDER_CLOSEST_VALUE 1)
+else()
+  set(BOOTCAMP_TARGET_ORDER_CLOSEST_VALUE 0)
+endif()
 target_compile_definitions(xiao_vl53l8cx_bootcamp PRIVATE
   BOOTCAMP_FIRMWARE_VERSION="${PROJECT_VERSION}"
   BOOTCAMP_RANGING_CONTINUOUS=${BOOTCAMP_RANGING_CONTINUOUS_VALUE}
   BOOTCAMP_INTEGRATION_TIME_MS=${BOOTCAMP_INTEGRATION_TIME_MS}u
+  BOOTCAMP_TARGET_ORDER_CLOSEST=${BOOTCAMP_TARGET_ORDER_CLOSEST_VALUE}
   # ULD のソースも同じ値で配列の大きさと出力の形式を決めるので、ターゲット全体に付ける(include/platform.h)
   VL53L8CX_NB_TARGET_PER_ZONE=${BOOTCAMP_TARGETS_PER_ZONE}U
 )

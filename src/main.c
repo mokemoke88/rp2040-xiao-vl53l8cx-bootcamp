@@ -401,10 +401,11 @@ static const char *target_order_name(uint8_t order) {
 }
 
 /**
- * @brief 測距モード(と autonomous なら積分時間)を設定し、設定をセンサーから読み返して sensor_settings_text に組み立てる。
+ * @brief 測距モード(と autonomous なら積分時間)とターゲットの順を設定し、設定をセンサーから読み返して
+ *        sensor_settings_text に組み立てる。
  *
- * 既定の設定(autonomous / 5 ms)は ULD の既定値と同じだが、既定値に頼らず明示する。sharpener とターゲットの順は
- * 変えずに読み返すだけ(sharpener の既定値は資料で食い違うため、実際の値を出す)。get / set は測距中は使えないので、
+ * 既定の設定(autonomous / 5 ms / strongest)は ULD の既定値と同じだが、既定値に頼らず明示する。sharpener は変えずに
+ * 読み返すだけ(既定値は資料で食い違っていたため、実際の値を出す)。get / set は測距中は使えないので、
  * vl53l8cx_start_ranging() より前に呼ぶ。失敗したら fail_forever() で止まる。
  */
 static void configure_ranging(void) {
@@ -417,6 +418,10 @@ static void configure_ranging(void) {
     status = vl53l8cx_set_integration_time_ms(&dev, BOOTCAMP_INTEGRATION_TIME_MS);
     if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_set_integration_time_ms", status);
   }
+  const uint8_t target_order =
+      BOOTCAMP_TARGET_ORDER_CLOSEST ? VL53L8CX_TARGET_ORDER_CLOSEST : VL53L8CX_TARGET_ORDER_STRONGEST;
+  status = vl53l8cx_set_target_order(&dev, target_order);
+  if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_set_target_order", status);
 
   uint8_t got_mode = 0;
   uint32_t integration_ms = 0;
@@ -566,7 +571,8 @@ static void handle_keys(void) {
  */
 static void draw_frame(uint32_t frame_no, uint32_t fps_x10, uint32_t read_us, uint32_t draw_us) {
 #if VL53L8CX_NB_TARGET_PER_ZONE > 1
-  /* 最初のターゲット(ULD のターゲットの順で先頭。既定は strongest)だけを、ゾーン番号で並べ直して渡す。
+  /* 最初のターゲット(センサーのターゲットの順で先頭。BOOTCAMP_TARGET_ORDER_CLOSEST で closest / strongest)だけを、
+     ゾーン番号で並べ直して渡す。
      nb_target_detected はゾーンごとなのでそのまま渡す */
   for (uint32_t z = 0; z < BOOTCAMP_RESOLUTION; z++) {
     const uint32_t i = z * VL53L8CX_NB_TARGET_PER_ZONE;
