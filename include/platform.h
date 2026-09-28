@@ -26,9 +26,12 @@
 /**
  * @brief 1 ゾーンあたりに報告するターゲット数(1〜4)。
  *
- * ULD はこの値で測距結果の配列の大きさと、センサーに設定する出力の形式を決める。Step 1 は最も近い 1 つだけ使う。
+ * ULD はこの値で測距結果の配列の大きさと、センサーに設定する出力の形式を決める。既定は 1。CMake のキャッシュ変数
+ * BOOTCAMP_TARGETS_PER_ZONE で変えられる(CMake が compile definition で ULD のソースにも同じ値を渡す)。
  */
+#ifndef VL53L8CX_NB_TARGET_PER_ZONE
 #define VL53L8CX_NB_TARGET_PER_ZONE 1U
+#endif
 
 /*
  * 測距結果のうち使わない出力を無効にする。定義した項目は VL53L8CX_ResultsData から消え、I2C で読むデータも減る。

@@ -1,44 +1,46 @@
 # SPDX-License-Identifier: MIT
-# docs/design-notes.md の「設計メモ(Step 2)」「設計メモ(Step 3)」の読み出し時間の見積もりの検算: vl53l8cx_get_ranging_data が 1 フレームで I2C から読む
-# バイト数(ULD の data_read_size)と、その I2C 転送にかかる時間を計算する。
+# docs/design-notes.md の「設計メモ(Step 2)」「設計メモ(Step 3)」「設計メモ(1 ゾーン 2 ターゲット)」の読み出し時間の見積もりの検算:
+# vl53l8cx_get_ranging_data が 1 フレームで I2C から読むバイト数(ULD の data_read_size)と、その I2C 転送にかかる時間を計算する。
 # data_read_size の計算は third_party/vl53l8cx_uld/src/vl53l8cx_api.c の vl53l8cx_start_ranging と同じ。
-# ブロックヘッダの値は vl53l8cx_api.h(VL53L8CX_NB_TARGET_PER_ZONE == 1 の場合)、有効な出力は include/platform.h。
+# ブロックヘッダの値は vl53l8cx_api.h(VL53L8CX_NB_TARGET_PER_ZONE == 1 の場合と、それ以外の #else 側)、有効な出力は include/platform.h。
+import argparse
 from fractions import Fraction
 
-NB_TARGET_PER_ZONE = 1
-# (名前, ブロックヘッダ, output_bh_enable のビット, 有効か)
+# (名前, T = 1 のブロックヘッダ, T > 1 のブロックヘッダ, 有効か)
 OUTPUTS = [
-    ("START", 0x0000000D, 0, True),
-    ("METADATA", 0x54B400C0, 1, True),
-    ("COMMONDATA", 0x54C00040, 2, True),
-    ("AMBIENT_RATE", 0x54D00104, 3, False),        # VL53L8CX_DISABLE_AMBIENT_PER_SPAD
-    ("SPAD_COUNT", 0x55D00404, 4, True),           # Step 3 で有効にした(有効 SPAD 数)
-    ("NB_TARGET_DETECTED", 0xDB840401, 5, True),
-    ("SIGNAL_RATE", 0xDBC40404, 6, True),          # Step 3 で有効にした(ブラウザの IR 画像)
-    ("RANGE_SIGMA_MM", 0xDEC40402, 7, True),
-    ("DISTANCE", 0xDF440402, 8, True),
-    ("REFLECTANCE", 0xE0440401, 9, False),         # VL53L8CX_DISABLE_REFLECTANCE_PERCENT
-    ("TARGET_STATUS", 0xE0840401, 10, True),
-    ("MOTION_DETECT", 0xD85808C0, 11, False),      # VL53L8CX_DISABLE_MOTION_INDICATOR
+    ("START", 0x0000000D, 0x0000000D, True),
+    ("METADATA", 0x54B400C0, 0x54B400C0, True),
+    ("COMMONDATA", 0x54C00040, 0x54C00040, True),
+    ("AMBIENT_RATE", 0x54D00104, 0x54D00104, False),        # VL53L8CX_DISABLE_AMBIENT_PER_SPAD
+    ("SPAD_COUNT", 0x55D00404, 0x55D00404, True),           # Step 3 で有効にした(有効 SPAD 数)
+    ("NB_TARGET_DETECTED", 0xDB840401, 0x57D00401, True),
+    ("SIGNAL_RATE", 0xDBC40404, 0x58900404, True),          # Step 3 で有効にした(ブラウザの IR 画像)
+    ("RANGE_SIGMA_MM", 0xDEC40402, 0x64900402, True),
+    ("DISTANCE", 0xDF440402, 0x66900402, True),
+    ("REFLECTANCE", 0xE0440401, 0x6A900401, False),         # VL53L8CX_DISABLE_REFLECTANCE_PERCENT
+    ("TARGET_STATUS", 0xE0840401, 0x6B900401, True),
+    ("MOTION_DETECT", 0xD85808C0, 0xCC5008C0, False),       # VL53L8CX_DISABLE_MOTION_INDICATOR
 ]
 
 # i2c_set_baudrate の戻り値(clk_sys 125 MHz、要求 400 kHz)
 I2C_HZ = 125_000_000 // ((125_000_000 + 400_000 // 2) // 400_000)
 
 
-def data_read_size(resolution):
+def data_read_size(resolution, targets):
     size = 0
-    for _name, bh, _bit, enabled in OUTPUTS:
+    for _name, bh1, bhn, enabled in OUTPUTS:
+        bh = bh1 if targets == 1 else bhn
         if not enabled or bh == 0:
             continue
         typ = bh & 0xF
         bsize = (bh >> 4) & 0xFFF
         idx = (bh >> 16) & 0xFFFF
         if 0x1 <= typ < 0xD:
+            # ゾーンごとの出力(周囲光・SPAD 数・ターゲット数)は、この範囲の idx に置かれる
             if 0x54D0 <= idx < 0x54D0 + 960:
                 bsize = resolution
             else:
-                bsize = resolution * NB_TARGET_PER_ZONE
+                bsize = resolution * targets
             size += typ * bsize
         else:
             size += bsize
@@ -53,9 +55,14 @@ def transfer_bits(read_bytes):
 
 
 def main():
-    print(f"I2C clock: {I2C_HZ} Hz")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--targets", type=int, choices=(1, 2, 3, 4), default=1,
+                    help="VL53L8CX_NB_TARGET_PER_ZONE(既定 1)")
+    targets = ap.parse_args().targets
+
+    print(f"I2C clock: {I2C_HZ} Hz, targets per zone: {targets}")
     for name, res, hz in (("4x4", 16, 10), ("8x8", 64, 15)):
-        n = data_read_size(res)
+        n = data_read_size(res, targets)
         t_ms = Fraction(transfer_bits(n) * 1000, I2C_HZ)
         period_ms = Fraction(1000, hz)
         print(f"{name}: data_read_size = {n} bytes, transfer >= {float(t_ms):.2f} ms"
@@ -67,7 +74,7 @@ def main():
     # 含めた実際の時間を推定する(比が読み出しバイト数によらず一定と仮定した目安)
     step2_bytes, step2_measured_ms = 452, Fraction(1263, 100)
     ratio = step2_measured_ms / Fraction(transfer_bits(step2_bytes) * 1000, I2C_HZ)
-    n = data_read_size(64)
+    n = data_read_size(64, targets)
     scaled = Fraction(transfer_bits(n) * 1000, I2C_HZ) * ratio
     print(f"8x8 scaled by the Step 2 measurement (x{float(ratio):.3f}): about {float(scaled):.1f} ms")
 

@@ -25,8 +25,9 @@
 _Static_assert(BOOTCAMP_RESOLUTION == VL53L8CX_RESOLUTION_4X4 || BOOTCAMP_RESOLUTION == VL53L8CX_RESOLUTION_8X8,
                "BOOTCAMP_ZONE_SIDE must be 4 or 8");
 _Static_assert(BOOTCAMP_ZONE_SIDE <= DEPTH_VIEW_MAX_SIDE, "BOOTCAMP_ZONE_SIDE exceeds DEPTH_VIEW_MAX_SIDE");
-/* depth_view には ULD の結果の配列をそのまま渡し、添字をゾーン番号として扱う。1 ゾーン 1 ターゲットが前提 */
-_Static_assert(VL53L8CX_NB_TARGET_PER_ZONE == 1u, "depth_view expects one target per zone");
+/* ULD が受け付けるターゲット数は 1〜4。depth_view には最初のターゲットだけを渡す(draw_frame) */
+_Static_assert(VL53L8CX_NB_TARGET_PER_ZONE >= 1u && VL53L8CX_NB_TARGET_PER_ZONE <= 4u,
+               "VL53L8CX_NB_TARGET_PER_ZONE must be 1-4");
 
 /* バイナリの測距フレームも ULD の配列をそのまま渡す。ターゲット数は frame_proto の範囲内であること */
 _Static_assert(VL53L8CX_NB_TARGET_PER_ZONE <= FP_MAX_TARGETS, "too many targets per zone for frame_proto");
@@ -91,6 +92,20 @@ static VL53L8CX_Configuration dev;
 
 /** @brief 1 フレームぶんの測距結果。dev と同じ理由で静的領域に置く。 */
 static VL53L8CX_ResultsData results;
+
+#if VL53L8CX_NB_TARGET_PER_ZONE > 1
+/**
+ * @brief テキスト表示に渡す、最初のターゲットだけの距離・ステータス・sigma(添字 = ゾーン番号)。
+ *
+ * ULD の結果の配列は「ゾーン × ターゲット数 + ターゲット」で並ぶが、depth_view はゾーン番号で並んだ配列を受け取る。
+ * ターゲット数が 1 のときはそのまま渡せるので、この配列は持たない。
+ */
+static int16_t first_distance_mm[VL53L8CX_RESOLUTION_8X8];
+/** @brief first_distance_mm と同じく、最初のターゲットの測距ステータス。 */
+static uint8_t first_target_status[VL53L8CX_RESOLUTION_8X8];
+/** @brief first_distance_mm と同じく、最初のターゲットの sigma [mm]。 */
+static uint16_t first_range_sigma_mm[VL53L8CX_RESOLUTION_8X8];
+#endif
 
 /** @brief 距離画像の文字列の組み立て先(約 3.3 KB。depth_view_render() が必要とする大きさ)。 */
 static char frame_text[DEPTH_VIEW_RENDER_BUF_SIZE];
@@ -550,9 +565,22 @@ static void handle_keys(void) {
  * @param draw_us 前のフレームの描画(文字列の組み立てと USB への出力)の所要時間 [µs]
  */
 static void draw_frame(uint32_t frame_no, uint32_t fps_x10, uint32_t read_us, uint32_t draw_us) {
+#if VL53L8CX_NB_TARGET_PER_ZONE > 1
+  /* 最初のターゲット(ULD のターゲットの順で先頭。既定は strongest)だけを、ゾーン番号で並べ直して渡す。
+     nb_target_detected はゾーンごとなのでそのまま渡す */
+  for (uint32_t z = 0; z < BOOTCAMP_RESOLUTION; z++) {
+    const uint32_t i = z * VL53L8CX_NB_TARGET_PER_ZONE;
+    first_distance_mm[z] = results.distance_mm[i];
+    first_target_status[z] = results.target_status[i];
+    first_range_sigma_mm[z] = results.range_sigma_mm[i];
+  }
+  const depth_view_frame_t f = {BOOTCAMP_ZONE_SIDE, first_distance_mm, first_target_status, first_range_sigma_mm,
+                                results.nb_target_detected};
+#else
   /* ULD の結果の配列をそのまま渡す(VL53L8CX_NB_TARGET_PER_ZONE = 1 なので添字 = ゾーン番号) */
   const depth_view_frame_t f = {BOOTCAMP_ZONE_SIDE, results.distance_mm, results.target_status, results.range_sigma_mm,
                                 results.nb_target_detected};
+#endif
   depth_view_status_t st = {
       .frame_no = frame_no,
       .warming_up = frame_no <= BOOTCAMP_WARMUP_FRAMES,
@@ -621,8 +649,9 @@ int main(void) {
   status = vl53l8cx_start_ranging(&dev);
   if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_start_ranging", status);
   /* data_read_size は start_ranging が有効な出力から計算した、1 フレームで読むバイト数 */
-  printf("ranging %ux%u @ %u Hz, %lu bytes per frame (press ? for help)\n", (unsigned)BOOTCAMP_ZONE_SIDE,
-         (unsigned)BOOTCAMP_ZONE_SIDE, (unsigned)BOOTCAMP_RANGING_FREQ_HZ, (unsigned long)dev.data_read_size);
+  printf("ranging %ux%u @ %u Hz, %u target(s) per zone, %lu bytes per frame (press ? for help)\n",
+         (unsigned)BOOTCAMP_ZONE_SIDE, (unsigned)BOOTCAMP_ZONE_SIDE, (unsigned)BOOTCAMP_RANGING_FREQ_HZ,
+         (unsigned)VL53L8CX_NB_TARGET_PER_ZONE, (unsigned long)dev.data_read_size);
 
   led_set(BOOTCAMP_PIN_LED_GREEN, true);
 

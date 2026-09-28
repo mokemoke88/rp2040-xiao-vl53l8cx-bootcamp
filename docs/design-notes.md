@@ -204,6 +204,14 @@ third_party/
 - **切り替え**: CMake のオプションで変えられる(既定は autonomous / 5 ms)。`make firmware BUILD_DIR=build-continuous CMAKE_ARGS=-DBOOTCAMP_RANGING_CONTINUOUS=ON` で continuous、`CMAKE_ARGS=-DBOOTCAMP_INTEGRATION_TIME_MS=15` で積分時間を変える。積分時間は 2〜1000 ms(ULD のコメント)。8x8 の autonomous は 4 回の積分からなり「合計 + 1 ms」が周期を超えると周期が延びる(UM3109)ので、8x8 / 15 Hz で 16 ms を超える値はビルドで弾く(`_Static_assert`。4x4 の積分の回数は資料で確かめていないので 8x8 だけ)。continuous と autonomous の性能の比較は未実施
 - **ファームウェアの版**: `CMakeLists.txt` の `project(VERSION)` を compile definition で渡し、`xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)` にする。手で上げる。状態メッセージの版の文字列は 64 バイトまでで、固定の部分が 44 バイトあるので、版に使えるのは 20 バイトまで。`git describe` の形(例 `v1.0.0-3-g3a9813e-dirty`、23 バイト)は収まらないので使わない。超えたらビルドで弾く(`_Static_assert`)。テストベクタと `test/fixtures/` の記録にある `step3` の文字列は、例のデータと当時の記録なので変えない
 
+## 設計メモ(1 ゾーン 2 ターゲット)
+
+- **切り替え**: 1 ゾーンあたりのターゲット数(ULD の `VL53L8CX_NB_TARGET_PER_ZONE`)は CMake のキャッシュ変数 `BOOTCAMP_TARGETS_PER_ZONE`(1〜4、既定 1)で変える。例: `make firmware BUILD_DIR=build-t2 CMAKE_ARGS=-DBOOTCAMP_TARGETS_PER_ZONE=2`。ULD のソースも同じ値で配列の大きさと出力の形式を決めるので、compile definition はターゲット全体に付ける(`include/platform.h` は `#ifndef` で既定 1 を持つ)
+- **見積もり(8x8、T = 2)**: 1 フレームの読み出しは 972 → **1548 バイト**(signal_per_spad +256、sigma +128、距離 +128、ステータス +64。ターゲット数と SPAD 数はゾーンごとなので変わらない。`tools/verification/estimate_ranging_read_time.py --targets 2`。T > 1 ではブロックヘッダの idx も変わる)。I2C の転送は **35.0 ms 以上**、Step 2 の実測との比(×1.229)で **約 43.0 ms**。15 Hz の周期 66.7 ms の約 65%。ULD の一時バッファは `VL53L8CX_MAX_RESULTS_SIZE` = 1556 バイトになり、1548 バイトが収まる
+- **USB**: バイナリの 1 フレームはペイロード 1490 バイト(ヘッダ 18 + 距離 256 + ステータス 128 + sigma 256 + ターゲット数 64 + signal 512 + SPAD 数 256)。15 Hz で約 23 KB/s。送信にかかる時間は見積もっていない(実機で測る)
+- **テキスト表示**: depth_view はゾーン番号で並んだ配列を受け取るので、`draw_frame` で最初のターゲット(ULD のターゲットの順で先頭。既定は strongest)の距離・ステータス・sigma をゾーン番号の配列に写してから渡す。T = 1 のときは写さない。depth_view 本体は変えない
+- **バイナリとブラウザ**: フレーム形式は T = 1〜4 に対応済みで、ファームは ULD の配列をそのまま送る。ブラウザの画像・3D・LiDAR 風ビューは最初のターゲット、ツールチップは全ターゲットを出す(Step 3〜5 の実装)
+
 ## 今後の候補(未着手)
 
 - **デモ用記録の収録**(保留): 手を左右に振る、人が前を横切る、白い物と黒い物、正面の壁。手順は [usage.md](usage.md) の「最終デモ(Step 5)」の「デモ(実機なし)」

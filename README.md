@@ -75,7 +75,7 @@ make firmware
 
 `cmake -S . -B build -G Ninja -DPICO_BOARD=seeed_xiao_rp2040` と `cmake --build build` を実行し、`build/xiao_vl53l8cx_bootcamp.uf2` ができる(CMake を直接使う場合も `-DPICO_BOARD=seeed_xiao_rp2040` を必ず指定する)。
 
-測距モードは既定で autonomous(積分時間 5 ms。ULD の既定値と同じ)。`make firmware BUILD_DIR=build-continuous CMAKE_ARGS=-DBOOTCAMP_RANGING_CONTINUOUS=ON` で continuous、`CMAKE_ARGS=-DBOOTCAMP_INTEGRATION_TIME_MS=15` で積分時間を変えられる([docs/design-notes.md](docs/design-notes.md) の「設計メモ(測距の設定)」)。
+測距モードは既定で autonomous(積分時間 5 ms。ULD の既定値と同じ)。`make firmware BUILD_DIR=build-continuous CMAKE_ARGS=-DBOOTCAMP_RANGING_CONTINUOUS=ON` で continuous、`CMAKE_ARGS=-DBOOTCAMP_INTEGRATION_TIME_MS=15` で積分時間を変えられる([docs/design-notes.md](docs/design-notes.md) の「設計メモ(測距の設定)」)。1 ゾーンあたりのターゲット数(既定 1)は `CMAKE_ARGS=-DBOOTCAMP_TARGETS_PER_ZONE=2` のように 1〜4 で変えられる(同じく「設計メモ(1 ゾーン 2 ターゲット)」)。
 
 1. XIAO の B(BOOT)ボタンを押しながら USB で PC に接続する(または接続中に B を押したまま R を押して離す)
 2. `RPI-RP2` ドライブが現れるので、`build/xiao_vl53l8cx_bootcamp.uf2` をコピーする。コピーが終わると自動で再起動する
