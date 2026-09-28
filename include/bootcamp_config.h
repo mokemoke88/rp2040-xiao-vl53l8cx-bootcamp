@@ -48,6 +48,29 @@
 #define BOOTCAMP_RANGING_FREQ_HZ 15u
 
 /**
+ * @brief 測距モードを continuous にするなら 1、autonomous にするなら 0。
+ *
+ * 既定の 0(autonomous)は ULD の既定値と同じで、明示しなかったときと動作は変わらない(UM3109 Rev 12、ULD の
+ * vl53l8cx_api.h の "The default mode is Autonomous")。continuous は周期全体で積分する。CMake の
+ * BOOTCAMP_RANGING_CONTINUOUS オプションで切り替える(CMake が compile definition で渡す)。
+ */
+#ifndef BOOTCAMP_RANGING_CONTINUOUS
+#define BOOTCAMP_RANGING_CONTINUOUS 0
+#endif
+
+/**
+ * @brief autonomous のときの積分時間 [ms](2〜1000。ULD の vl53l8cx_set_integration_time_ms のコメント)。
+ *        continuous では使わない。
+ *
+ * 既定の 5 ms は ULD の既定値と同じ(UM3109 Rev 12)。UM3109 によると、8x8 の autonomous は 4 回の積分からなり、
+ * 「積分時間の合計 + 1 ms」が測距の周期を超えると周期が自動で延びる。8x8 / 15 Hz(周期 66.7 ms)では 16 ms まで。
+ * CMake のキャッシュ変数 BOOTCAMP_INTEGRATION_TIME_MS で変えられる。
+ */
+#ifndef BOOTCAMP_INTEGRATION_TIME_MS
+#define BOOTCAMP_INTEGRATION_TIME_MS 5u
+#endif
+
+/**
  * @brief 有効とみなす sigma の上限 [mm](この値以下を有効にする)。暫定値。実機での分布(ステータス行の sigma の
  *        中央値・最大)を見て調整する。
  */

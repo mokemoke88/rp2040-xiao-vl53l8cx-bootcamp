@@ -9,12 +9,17 @@ endif()
 
 include(pico_sdk_import.cmake)
 
-project(xiao_vl53l8cx_bootcamp C CXX ASM)
+# VERSION はファームウェアの版の文字列(起動ログと状態メッセージ)に入る。リリースのたびに手で上げる
+project(xiao_vl53l8cx_bootcamp VERSION 1.0.0 LANGUAGES C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 pico_sdk_init()
+
+# 測距モードの切り替え(既定は ULD の既定値と同じ autonomous / 積分 5 ms。docs/design-notes.md の「設計メモ(測距の設定)」)
+option(BOOTCAMP_RANGING_CONTINUOUS "Use continuous ranging mode instead of autonomous" OFF)
+set(BOOTCAMP_INTEGRATION_TIME_MS 5 CACHE STRING "Integration time in autonomous mode [ms] (2-1000)")
 
 # 自作のソース
 set(BOOTCAMP_SOURCES
@@ -41,6 +46,17 @@ add_executable(xiao_vl53l8cx_bootcamp ${BOOTCAMP_SOURCES} ${ULD_SOURCES})
 target_include_directories(xiao_vl53l8cx_bootcamp PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/include
   ${ULD_DIR}/inc
+)
+
+if(BOOTCAMP_RANGING_CONTINUOUS)
+  set(BOOTCAMP_RANGING_CONTINUOUS_VALUE 1)
+else()
+  set(BOOTCAMP_RANGING_CONTINUOUS_VALUE 0)
+endif()
+target_compile_definitions(xiao_vl53l8cx_bootcamp PRIVATE
+  BOOTCAMP_FIRMWARE_VERSION="${PROJECT_VERSION}"
+  BOOTCAMP_RANGING_CONTINUOUS=${BOOTCAMP_RANGING_CONTINUOUS_VALUE}
+  BOOTCAMP_INTEGRATION_TIME_MS=${BOOTCAMP_INTEGRATION_TIME_MS}u
 )
 
 # 警告は自分のソースにだけ付ける(target_compile_options だと SDK と ULD のソースにも付いてしまう)

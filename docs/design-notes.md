@@ -196,6 +196,14 @@ third_party/
 - **ゾーンの値のツールチップ**(実機で使ってみて追加。以前は画像にマウスを乗せると下の「ゾーン」の欄に値を出していたが、欄がページの下にあり、乗せたまま見られなかった): `position: fixed` の要素をカーソルのそばに出す。マウスの状態は「どの図の、描画の座標でどこか」だけを持ち、ゾーンは描画のたびに現在の向き・データ・図の大きさから求め直す(8x8 画像は `cellFromPoint`、扇形は `lidarView.ts` の `pickNearestPoint`)。配置(`placeTooltip`)・最も近い点・模擬の何フレーム前か(`scanLagFrames`、`ScanSimulator.sourceSeqs`)は DOM 非依存で、`test/hover.test.ts` でテストしている。変異 19 個をすべて検出(当たり判定の半径の境界・同じ距離のとき・無効な点と範囲外の点・画面の左右、ツールチップの反転の境界・端の余白・反転後の間隔・縦横の取り違え、何フレーム前の向き、元のフレームの seq の並び、デバイスの消失の判定)。最初は当たり判定の半径の値の変異が生き残った(テストが定数を名前で参照していた)ので、画面の説明と同じ 12 px であることを検査した
 - **USB の抜去のログ**: 抜去で読み取りが NetworkError になったときは、読み取りエラーの警告を出さず、切断の 1 行(INFO、「デバイスが外れた(USB の抜去など)」)だけにした。接続が続く読み取りエラー(readable が差し替わる)は従来どおり WARN で出して読み続け、続けられないほかのエラーは切断の 1 行(WARN)にまとめる。ポートの `disconnect` イベントでのログはやめた(切断の行と重なるため)
 
+## 設計メモ(測距の設定)
+
+- **測距モードを明示する**: Step 1〜5 では解像度と頻度しか設定しておらず、ULD の既定値(autonomous、積分時間 5 ms。UM3109 Rev 12、ULD の `vl53l8cx_api.h` の "The default mode is Autonomous")で動いていた。既定値に頼らず、`vl53l8cx_set_ranging_mode` と `vl53l8cx_set_integration_time_ms` で同じ値を明示的に設定する(動作は変えない)。設定は `vl53l8cx_set_ranging_frequency_hz` の後、`vl53l8cx_start_ranging` の前(get / set は測距中は使えない)
+- **読み返して出す**: 設定の後に、測距モード・積分時間・sharpener・ターゲットの順をセンサーから読み返し、起動ログの 1 行(`sensor: mode autonomous, integration 5 ms, sharpener N%, order strongest`)にする。sharpener の既定値は資料で食い違う(UM3109 Rev 12 は 1%、データシート DS14161 Rev 12 の画角の測定条件は「14%(既定値)」)ので、実際の値を出して確かめられるようにした。sharpener とターゲットの順は変えない
+- **ブラウザへはログのメッセージで送る**: 状態メッセージ(種別 3)に設定のフィールドを足すと、フレーム形式の版を上げることになり、テストベクタと 3 つの実装(C / Python / TypeScript)、既存の記録ファイルの扱いまで変わる。見合わないので、バイナリに入った直後(状態メッセージの後)に同じ 1 行をログのメッセージ(種別 2、INFO)で送る。形式は版 1 のまま
+- **切り替え**: CMake のオプションで変えられる(既定は autonomous / 5 ms)。`make firmware BUILD_DIR=build-continuous CMAKE_ARGS=-DBOOTCAMP_RANGING_CONTINUOUS=ON` で continuous、`CMAKE_ARGS=-DBOOTCAMP_INTEGRATION_TIME_MS=15` で積分時間を変える。積分時間は 2〜1000 ms(ULD のコメント)。8x8 の autonomous は 4 回の積分からなり「合計 + 1 ms」が周期を超えると周期が延びる(UM3109)ので、8x8 / 15 Hz で 16 ms を超える値はビルドで弾く(`_Static_assert`。4x4 の積分の回数は資料で確かめていないので 8x8 だけ)。continuous と autonomous の性能の比較は未実施
+- **ファームウェアの版**: `CMakeLists.txt` の `project(VERSION)` を compile definition で渡し、`xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)` にする。手で上げる。状態メッセージの版の文字列は 64 バイトまでで、固定の部分が 44 バイトあるので、版に使えるのは 20 バイトまで。`git describe` の形(例 `v1.0.0-3-g3a9813e-dirty`、23 バイト)は収まらないので使わない。超えたらビルドで弾く(`_Static_assert`)。テストベクタと `test/fixtures/` の記録にある `step3` の文字列は、例のデータと当時の記録なので変えない
+
 ## 今後の候補(未着手)
 
 - **デモ用記録の収録**(保留): 手を左右に振る、人が前を横切る、白い物と黒い物、正面の壁。手順は [usage.md](usage.md) の「最終デモ(Step 5)」の「デモ(実機なし)」

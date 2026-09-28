@@ -31,8 +31,26 @@ _Static_assert(VL53L8CX_NB_TARGET_PER_ZONE == 1u, "depth_view expects one target
 /* バイナリの測距フレームも ULD の配列をそのまま渡す。ターゲット数は frame_proto の範囲内であること */
 _Static_assert(VL53L8CX_NB_TARGET_PER_ZONE <= FP_MAX_TARGETS, "too many targets per zone for frame_proto");
 
+/* 版番号は CMakeLists.txt の project(VERSION) から compile definition で渡される */
+#ifndef BOOTCAMP_FIRMWARE_VERSION
+#error "BOOTCAMP_FIRMWARE_VERSION is not defined (build with CMakeLists.txt)"
+#endif
+
 /** @brief ファームウェアの版の文字列(起動ログと、バイナリの状態メッセージに入れる)。 */
-#define FIRMWARE_VERSION "xiao-vl53l8cx-bootcamp step3 (ULD " VL53L8CX_API_REVISION ")"
+#define FIRMWARE_VERSION "xiao-vl53l8cx-bootcamp " BOOTCAMP_FIRMWARE_VERSION " (ULD " VL53L8CX_API_REVISION ")"
+
+/* 状態メッセージの版の文字列は FP_VERSION_TEXT_MAX バイトで切り詰められるので、黙って欠けないようにする */
+_Static_assert(sizeof FIRMWARE_VERSION - 1u <= FP_VERSION_TEXT_MAX,
+               "FIRMWARE_VERSION is too long for the status message");
+
+/* 積分時間の範囲は ULD の vl53l8cx_set_integration_time_ms のコメント(2〜1000 ms) */
+_Static_assert(BOOTCAMP_INTEGRATION_TIME_MS >= 2u && BOOTCAMP_INTEGRATION_TIME_MS <= 1000u,
+               "BOOTCAMP_INTEGRATION_TIME_MS must be 2-1000");
+/* 8x8 の autonomous は 4 回の積分からなり、「積分時間の合計 + 1 ms」が周期を超えると周期が延びる(UM3109 Rev 12)。
+   周期が設定した頻度より延びる設定はビルドで弾く。4x4 の積分の回数は資料で確かめていないので 8x8 だけ検査する */
+_Static_assert(BOOTCAMP_RANGING_CONTINUOUS || BOOTCAMP_ZONE_SIDE != 8u ||
+                   4u * BOOTCAMP_INTEGRATION_TIME_MS + 1u <= 1000u / BOOTCAMP_RANGING_FREQ_HZ,
+               "integration time too long for the ranging frequency (8x8 autonomous)");
 
 /**
  * @brief バイナリの測距フレームに含めるフィールド。platform.h で有効にしている ULD の出力(距離・ステータス・sigma・
@@ -123,6 +141,13 @@ static uint8_t tx_payload[FP_PAYLOAD_MAX + FP_CRC_BYTES];
 
 /** @brief USB シリアルに出す形(COBS + 区切りの 0x00)の組み立て先。 */
 static uint8_t tx_serial[FP_SERIAL_MAX];
+
+/**
+ * @brief センサーから読み返した測距の設定の 1 行(起動ログと、バイナリに入ったときのログのメッセージ)。
+ *
+ * get 系の関数は測距中は使えない(UM3109 Rev 12)ので、測距の開始前に 1 回だけ読んで組み立てておく。
+ */
+static char sensor_settings_text[FP_LOG_TEXT_MAX + 1u];
 
 /**
  * @brief RGB LED の3色を消灯した状態で出力に設定する。
@@ -299,6 +324,8 @@ static void enter_binary(void) {
   output_mode = OUTPUT_BINARY;
   put_raw(&delimiter, 1u);
   send_status();
+  /* 測距の設定は状態メッセージの形式にないので、ログのメッセージで送る(フレーム形式を変えずに済む) */
+  log_line(FP_LOG_INFO, "%s", sensor_settings_text);
 }
 
 /** @brief テキストの表示に戻す。カラーなら次の描画で画面を消す。 */
@@ -324,6 +351,88 @@ static void fail_forever(const char *step, uint8_t status) {
              dev.platform.last_i2c_error, (unsigned long)dev.platform.i2c_error_count);
     sleep_ms(BOOTCAMP_FAIL_REPORT_INTERVAL_MS);
   }
+}
+
+/**
+ * @brief 測距モードの名前を返す。
+ * @param mode vl53l8cx_get_ranging_mode() が返した値
+ * @return "continuous" / "autonomous"。ほかの値なら NULL
+ */
+static const char *ranging_mode_name(uint8_t mode) {
+  switch (mode) {
+  case VL53L8CX_RANGING_MODE_CONTINUOUS:
+    return "continuous";
+  case VL53L8CX_RANGING_MODE_AUTONOMOUS:
+    return "autonomous";
+  default:
+    return NULL;
+  }
+}
+
+/**
+ * @brief ターゲットの順の名前を返す。
+ * @param order vl53l8cx_get_target_order() が返した値
+ * @return "closest" / "strongest"。ほかの値なら NULL
+ */
+static const char *target_order_name(uint8_t order) {
+  switch (order) {
+  case VL53L8CX_TARGET_ORDER_CLOSEST:
+    return "closest";
+  case VL53L8CX_TARGET_ORDER_STRONGEST:
+    return "strongest";
+  default:
+    return NULL;
+  }
+}
+
+/**
+ * @brief 測距モード(と autonomous なら積分時間)を設定し、設定をセンサーから読み返して sensor_settings_text に組み立てる。
+ *
+ * 既定の設定(autonomous / 5 ms)は ULD の既定値と同じだが、既定値に頼らず明示する。sharpener とターゲットの順は
+ * 変えずに読み返すだけ(sharpener の既定値は資料で食い違うため、実際の値を出す)。get / set は測距中は使えないので、
+ * vl53l8cx_start_ranging() より前に呼ぶ。失敗したら fail_forever() で止まる。
+ */
+static void configure_ranging(void) {
+  const uint8_t mode =
+      BOOTCAMP_RANGING_CONTINUOUS ? VL53L8CX_RANGING_MODE_CONTINUOUS : VL53L8CX_RANGING_MODE_AUTONOMOUS;
+  uint8_t status = vl53l8cx_set_ranging_mode(&dev, mode);
+  if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_set_ranging_mode", status);
+  /* 積分時間は continuous では効かない(ULD の vl53l8cx_set_integration_time_ms のコメント)ので、autonomous のときだけ */
+  if (!BOOTCAMP_RANGING_CONTINUOUS) {
+    status = vl53l8cx_set_integration_time_ms(&dev, BOOTCAMP_INTEGRATION_TIME_MS);
+    if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_set_integration_time_ms", status);
+  }
+
+  uint8_t got_mode = 0;
+  uint32_t integration_ms = 0;
+  uint8_t sharpener = 0;
+  uint8_t order = 0;
+  status = vl53l8cx_get_ranging_mode(&dev, &got_mode);
+  if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_get_ranging_mode", status);
+  status = vl53l8cx_get_integration_time_ms(&dev, &integration_ms);
+  if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_get_integration_time_ms", status);
+  status = vl53l8cx_get_sharpener_percent(&dev, &sharpener);
+  if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_get_sharpener_percent", status);
+  status = vl53l8cx_get_target_order(&dev, &order);
+  if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_get_target_order", status);
+
+  /* 未知の値は名前の代わりに数値で出す */
+  char mode_buf[8];
+  char order_buf[8];
+  const char *mode_str = ranging_mode_name(got_mode);
+  const char *order_str = target_order_name(order);
+  if (mode_str == NULL) {
+    (void)snprintf(mode_buf, sizeof mode_buf, "%u", (unsigned)got_mode);
+    mode_str = mode_buf;
+  }
+  if (order_str == NULL) {
+    (void)snprintf(order_buf, sizeof order_buf, "%u", (unsigned)order);
+    order_str = order_buf;
+  }
+  /* 積分時間は continuous では使われないが、読み返した値をそのまま出す */
+  (void)snprintf(sensor_settings_text, sizeof sensor_settings_text,
+                 "sensor: mode %s, integration %lu ms, sharpener %u%%, order %s", mode_str,
+                 (unsigned long)integration_ms, (unsigned)sharpener, order_str);
 }
 
 /** @brief キー操作と表示の読み方を出す(各行 80 桁以内。depth_view_help_text)。カラー表示では画面を消してから出す。 */
@@ -507,6 +616,8 @@ int main(void) {
   /* 頻度は解像度に依存するので、解像度の後に設定する(ULD の vl53l8cx_set_ranging_frequency_hz のコメント) */
   status = vl53l8cx_set_ranging_frequency_hz(&dev, BOOTCAMP_RANGING_FREQ_HZ);
   if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_set_ranging_frequency_hz", status);
+  configure_ranging();
+  printf("%s\n", sensor_settings_text);
   status = vl53l8cx_start_ranging(&dev);
   if (status != VL53L8CX_STATUS_OK) fail_forever("vl53l8cx_start_ranging", status);
   /* data_read_size は start_ranging が有効な出力から計算した、1 フレームで読むバイト数 */
