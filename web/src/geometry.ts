@@ -20,7 +20,7 @@
  */
 
 import type { RangingFrame } from "./frame.ts";
-import { classifyZone, type Orientation, type ZoneClass } from "./view.ts";
+import { classifyTarget, type Orientation, type ZoneClass } from "./view.ts";
 
 /** 画角(水平・垂直とも)[度] */
 export const FOV_DEG = 45;
@@ -176,27 +176,42 @@ export function frustumCorners(distanceMm: number, model: DistanceModel): [Vec3,
 /** 点群の 1 点 */
 export interface CloudPoint {
   readonly zone: number;
-  /** ゾーンの状態(view.ts の classifyZone。ok 以外は無効) */
+  /** ターゲットの状態(view.ts の classifyTarget。ok 以外は無効) */
   readonly cls: ZoneClass;
-  /** 最初のターゲット(t = 0)の距離 [mm] */
+  /** ターゲットの番号(0 から。"first" の点群では常に 0) */
+  readonly target: number;
+  /** そのターゲットの距離 [mm] */
   readonly distanceMm: number;
   /** センサー座標の位置 [mm] */
   readonly position: Vec3;
 }
 
 /**
- * 測距フレームから点群を作る。各ゾーンの最初のターゲット(t = 0)を使う。
- * 距離のフィールドがなければ空。距離が 0 以下のゾーン(ターゲットなし等で値が意味を持たない)は含めない。
- * 無効なゾーンも cls 付きで含める(表示するかは呼び出し側が決める)。
+ * 点群に入れるターゲット。
+ * - `first`: 各ゾーンの最初のターゲット(t = 0)だけ
+ * - `detected`: 各ゾーンで検出したターゲット(t < nb_target_detected。T が上限)。t = 0 は検出数によらず候補にする
+ */
+export type CloudTargets = "first" | "detected";
+
+/**
+ * 測距フレームから点群を作る。
+ * 距離のフィールドがなければ空。距離が 0 以下のターゲット(ターゲットなし等で値が意味を持たない)は含めない。
+ * 無効なターゲットも cls 付きで含める(表示するかは呼び出し側が決める)。
+ *
+ * `detected` では、ゾーンごとに t = 0 から max(1, min(T, nb_target_detected)) 個を候補にする(ターゲット数の
+ * フィールドがなければ T 個)。t = 0 を常に候補にするのは、`first` と同じく「ターゲットなし」のゾーンも無効の点として
+ * 返すため。T = 1、または検出数が 1 以下のゾーンでは `first` と同じ結果になる。
  *
  * @param frame - 測距フレーム
  * @param orientation - 2D 画像が正面から見た見た目と一致する反転
  * @param model - 距離の解釈
+ * @param targets - 点群に入れるターゲット(既定は最初のターゲットだけ)
  */
 export function buildPointCloud(
   frame: RangingFrame,
   orientation: Orientation,
   model: DistanceModel,
+  targets: CloudTargets = "first",
 ): CloudPoint[] {
   const distances = frame.fields.distance_mm;
   if (distances === undefined) {
@@ -204,17 +219,23 @@ export function buildPointCloud(
   }
   const points: CloudPoint[] = [];
   const zones = frame.side * frame.side;
+  const perZone = frame.targetsPerZone;
   for (let zone = 0; zone < zones; zone++) {
-    const d = distances[zone * frame.targetsPerZone];
-    if (d === undefined || d <= 0) {
-      continue;
+    const detected = frame.fields.nb_target_detected?.[zone] ?? perZone;
+    const count = targets === "first" ? 1 : Math.max(1, Math.min(perZone, detected));
+    for (let target = 0; target < count; target++) {
+      const d = distances[zone * perZone + target];
+      if (d === undefined || d <= 0) {
+        continue;
+      }
+      points.push({
+        zone,
+        target,
+        cls: classifyTarget(frame, zone, target),
+        distanceMm: d,
+        position: zoneCenter(zone, frame.side, orientation, d, model),
+      });
     }
-    points.push({
-      zone,
-      cls: classifyZone(frame, zone),
-      distanceMm: d,
-      position: zoneCenter(zone, frame.side, orientation, d, model),
-    });
   }
   return points;
 }

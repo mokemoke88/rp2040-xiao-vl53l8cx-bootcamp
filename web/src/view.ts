@@ -42,8 +42,7 @@ export function zoneAt(row: number, col: number, side: number, orientation: Orie
 export type ZoneClass = "ok" | "none" | "status" | "sigma" | "nodata";
 
 /**
- * ゾーンの最初のターゲット(t = 0)の状態を判定する。
- * フレームに含まれないフィールドの検査は省く(距離がなければ `nodata`)。
+ * ゾーンの最初のターゲット(t = 0)の状態を判定する。classifyTarget の target = 0。
  *
  * @param frame - 測距フレーム
  * @param zone - ゾーンの番号
@@ -54,13 +53,34 @@ export function classifyZone(
   zone: number,
   sigmaMaxMm: number = SIGMA_MAX_MM,
 ): ZoneClass {
+  return classifyTarget(frame, zone, 0, sigmaMaxMm);
+}
+
+/**
+ * ゾーンの target 番目のターゲットの状態を判定する(添字は zone × T + target)。
+ * 判定の順は classifyZone と同じ。ターゲット数(nb_target_detected)が target 以下なら、そのターゲットは
+ * 検出されていないので `none`(target = 0 ならターゲット数 0 のとき)。
+ * フレームに含まれないフィールドの検査は省く(距離がなければ `nodata`)。
+ *
+ * @param frame - 測距フレーム
+ * @param zone - ゾーンの番号
+ * @param target - ターゲットの番号(0 から)
+ * @param sigmaMaxMm - sigma の上限 [mm]
+ */
+export function classifyTarget(
+  frame: RangingFrame,
+  zone: number,
+  target: number,
+  sigmaMaxMm: number = SIGMA_MAX_MM,
+): ZoneClass {
   const f = frame.fields;
-  const i = zone * frame.targetsPerZone;
+  const i = zone * frame.targetsPerZone + target;
   if (f.distance_mm?.[i] === undefined) {
     return "nodata";
   }
   const status = f.target_status?.[i];
-  if (f.nb_target_detected?.[zone] === 0 || status === 255) {
+  const detected = f.nb_target_detected?.[zone];
+  if ((detected !== undefined && target >= detected) || status === 255) {
     return "none";
   }
   if (status !== undefined && status !== 5 && status !== 9) {
@@ -343,11 +363,13 @@ export interface ColorRanges {
 /**
  * ゾーンの値の色(2D 画像と同じ色の関数)。距離は distanceColor、signal_per_spad は対数・自動レンジのグレースケール、
  * nb_spads_enabled は線形・自動レンジの青のランプ。ゾーンの有効・無効は見ない(呼び出し側で決める)。
+ * 距離と signal_per_spad は target 番目のターゲットの値を使う。nb_spads_enabled はゾーンごとの値なので target によらない。
  *
  * @param frame - 測距フレーム
  * @param zone - ゾーンの番号
  * @param by - 色に使う値
  * @param ranges - signal と SPAD 数の表示範囲
+ * @param target - ターゲットの番号(0 から。既定は最初のターゲット)
  * @returns 色。フィールドがない・範囲がまだないときは null
  */
 export function zoneValueColor(
@@ -355,9 +377,10 @@ export function zoneValueColor(
   zone: number,
   by: ColorBy,
   ranges: ColorRanges,
+  target = 0,
 ): Rgb | null {
   const f = frame.fields;
-  const i = zone * frame.targetsPerZone;
+  const i = zone * frame.targetsPerZone + target;
   switch (by) {
     case "distance": {
       const d = f.distance_mm?.[i];

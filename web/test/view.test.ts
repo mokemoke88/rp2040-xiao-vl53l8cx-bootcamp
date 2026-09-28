@@ -4,6 +4,7 @@ import {
   AutoRange,
   blueRampColor,
   OUT_OF_RANGE_COLOR,
+  classifyTarget,
   classifyZone,
   describeZone,
   distanceColor,
@@ -80,6 +81,49 @@ describe("classifyZone", () => {
       2,
     );
     expect(classifyZone(t2, 1)).toBe("status");
+  });
+});
+
+describe("classifyTarget", () => {
+  // T = 2。zone 0: 2 つ検出(t0 ok、t1 ok)、zone 1: 2 つ検出(t0 status 6、t1 ok)、zone 2: 1 つ検出(t1 は検出外)、
+  // zone 3: 2 つ検出(t0 ok、t1 sigma 超え)、zone 4: 2 つ検出(t1 が 255)、zone 5: 検出 0
+  const status = [5, 5, 6, 9, 5, 5, 5, 5, 5, 255, 5, 5];
+  const sigma = [10, 20, 10, 20, 10, 10, 10, 51, 10, 10, 10, 10];
+  const detected = [2, 2, 1, 2, 2, 0];
+  const t2 = frame4(
+    {
+      distance_mm: Int16Array.from({ length: 32 }, (_, i) => 100 + i),
+      target_status: Uint8Array.from({ length: 32 }, (_, i) => status[i] ?? 5),
+      range_sigma_mm: Uint16Array.from({ length: 32 }, (_, i) => sigma[i] ?? 10),
+      nb_target_detected: Uint8Array.from({ length: 16 }, (_, z) => detected[z] ?? 1),
+    },
+    2,
+  );
+
+  it("judges each target by its own status and sigma", () => {
+    expect(classifyTarget(t2, 0, 0)).toBe("ok");
+    expect(classifyTarget(t2, 0, 1)).toBe("ok");
+    expect(classifyTarget(t2, 1, 0)).toBe("status");
+    expect(classifyTarget(t2, 1, 1)).toBe("ok"); // 手前が無効でも奥は有効
+    expect(classifyTarget(t2, 3, 1)).toBe("sigma");
+    expect(classifyTarget(t2, 4, 1)).toBe("none"); // status 255
+  });
+
+  it("treats targets beyond nb_target_detected as none", () => {
+    expect(classifyTarget(t2, 2, 0)).toBe("ok");
+    expect(classifyTarget(t2, 2, 1)).toBe("none"); // 検出 1 つ: t = 1 は検出外
+    expect(classifyTarget(t2, 5, 0)).toBe("none"); // 検出 0
+  });
+
+  it("matches classifyZone for target 0", () => {
+    for (let zone = 0; zone < 16; zone++) {
+      expect(classifyTarget(t2, zone, 0)).toBe(classifyZone(t2, zone));
+    }
+  });
+
+  it("returns nodata without distances and skips missing fields", () => {
+    expect(classifyTarget(frame4({}, 2), 0, 1)).toBe("nodata");
+    expect(classifyTarget(frame4({ distance_mm: new Int16Array(32) }, 2), 3, 1)).toBe("ok");
   });
 });
 
@@ -209,5 +253,12 @@ describe("zoneValueColor with T = 2", () => {
     // zone 5 の SPAD 数は 100(添字 5)。ターゲットの添字(10)を使うと 200 になる
     expect(zoneValueColor(f, 5, "spads", ranges)).toEqual(blueRampColor(0));
     expect(zoneValueColor(f, 9, "spads", ranges)).toEqual(blueRampColor(1));
+  });
+
+  it("uses the given target for per-target fields", () => {
+    expect(zoneValueColor(f, 5, "distance", ranges, 1)).toEqual(distanceColor(1900));
+    expect(zoneValueColor(f, 5, "signal", ranges, 1)).toEqual(grayColor(0));
+    // SPAD 数はゾーンごとなので、ターゲットによらない(zone 7 は 100、隣の zone 8 は 200)
+    expect(zoneValueColor(f, 7, "spads", ranges, 1)).toEqual(blueRampColor(0));
   });
 });

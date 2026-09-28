@@ -286,6 +286,93 @@ describe("point cloud", () => {
 
   it("is empty without distances", () => {
     expect(buildPointCloud({ ...frame4([], []), fields: {} }, H1V0, "radial")).toEqual([]);
+    expect(buildPointCloud({ ...frame4([], []), fields: {} }, H1V0, "radial", "detected")).toEqual(
+      [],
+    );
+  });
+});
+
+describe("point cloud with all detected targets", () => {
+  // T = 2、4x4。t0 は 500 mm、t1 は 3000 mm。ステータスは既定で 5
+  function frameT2(fields: Partial<RangingFrame["fields"]>): RangingFrame {
+    return {
+      type: "frame",
+      seq: 0,
+      timestampUs: 0,
+      side: 4,
+      targetsPerZone: 2,
+      fieldMask: 0x0b,
+      temperatureC: 0,
+      fields: {
+        distance_mm: Int16Array.from({ length: 32 }, (_, i) => (i % 2 === 0 ? 500 : 3000)),
+        target_status: new Uint8Array(32).fill(5),
+        ...fields,
+      },
+    };
+  }
+  const summary = (cloud: ReturnType<typeof buildPointCloud>) =>
+    cloud.map((p) => `${p.zone}.${p.target}:${p.distanceMm}:${p.cls}`);
+
+  it("draws the targets up to nb_target_detected, and always the first", () => {
+    const detected = [2, 1, 0];
+    const f = frameT2({
+      nb_target_detected: Uint8Array.from({ length: 16 }, (_, z) => detected[z] ?? 1),
+    });
+    const cloud = buildPointCloud(f, H1V0, "perpendicular", "detected");
+    // zone 0: 2 つ、zone 1: 1 つ、zone 2: 検出 0 でも t0 を無効(none)の点として返す、以降 1 つずつ
+    expect(summary(cloud).slice(0, 4)).toEqual([
+      "0.0:500:ok",
+      "0.1:3000:ok",
+      "1.0:500:ok",
+      "2.0:500:none",
+    ]);
+    expect(cloud).toHaveLength(17);
+    const far = cloud.find((p) => p.zone === 0 && p.target === 1);
+    expect(far?.position).toEqual(zoneCenter(0, 4, H1V0, 3000, "perpendicular"));
+  });
+
+  it("uses all T targets without nb_target_detected, skipping non-positive distances", () => {
+    const d = Int16Array.from({ length: 32 }, (_, i) =>
+      i === 3 ? 0 : i === 5 ? -1 : i % 2 === 0 ? 500 : 3000,
+    );
+    const cloud = buildPointCloud(frameT2({ distance_mm: d }), H1V0, "perpendicular", "detected");
+    // zone 1 と zone 2 の t1(添字 3 と 5)は距離 0 以下なので除く
+    expect(cloud).toHaveLength(30);
+    expect(cloud.filter((p) => p.zone === 1).map((p) => p.target)).toEqual([0]);
+    expect(cloud.filter((p) => p.zone === 2).map((p) => p.target)).toEqual([0]);
+  });
+
+  it("classifies each target separately", () => {
+    const status = new Uint8Array(32).fill(5);
+    status[0] = 6; // zone 0 の t0 は無効、t1 は有効
+    status[3] = 13; // zone 1 の t1 は無効
+    const cloud = buildPointCloud(
+      frameT2({ target_status: status, nb_target_detected: new Uint8Array(16).fill(2) }),
+      H1V0,
+      "perpendicular",
+      "detected",
+    );
+    expect(summary(cloud).slice(0, 4)).toEqual([
+      "0.0:500:status",
+      "0.1:3000:ok",
+      "1.0:500:ok",
+      "1.1:3000:status",
+    ]);
+  });
+
+  it("never reads past T even if nb_target_detected is larger", () => {
+    // ULD からは来ない値だが、T を超えて読むと次のゾーンの t0 を読んでしまう
+    const f = frameT2({ nb_target_detected: new Uint8Array(16).fill(4) });
+    const cloud = buildPointCloud(f, H1V0, "perpendicular", "detected");
+    expect(cloud).toHaveLength(32);
+    expect(cloud.filter((p) => p.zone === 0).map((p) => p.distanceMm)).toEqual([500, 3000]);
+  });
+
+  it("keeps the first-target cloud unchanged", () => {
+    const f = frameT2({ nb_target_detected: new Uint8Array(16).fill(2) });
+    const first = buildPointCloud(f, H1V0, "perpendicular");
+    expect(first).toHaveLength(16);
+    expect(first.every((p) => p.target === 0 && p.distanceMm === 500)).toBe(true);
   });
 });
 
@@ -325,6 +412,14 @@ describe("point cloud from the real capture (step3, 2026-09-27)", () => {
           expect(Math.abs(y)).toBeLessThanOrEqual(z * limit + 1e-9);
         }
       }
+    }
+  });
+
+  it("gives the same cloud with all detected targets when T = 1", () => {
+    for (const f of frames) {
+      expect(buildPointCloud(f, H1V0, "perpendicular", "detected")).toEqual(
+        buildPointCloud(f, H1V0, "perpendicular"),
+      );
     }
   });
 

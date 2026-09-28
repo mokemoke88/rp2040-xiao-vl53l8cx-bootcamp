@@ -20,6 +20,9 @@ export const STATUS_HEADER_LENGTH = 27;
 /** CRC-32 の長さ [バイト] */
 export const CRC_LENGTH = 4;
 
+/** 版 1 のゾーンあたりのターゲット数(T)の上限 */
+export const MAX_TARGETS_PER_ZONE = 4;
+
 /** 版 1 のペイロードの最大長(8x8、T = 4、全フィールド)[バイト] */
 export const MAX_PAYLOAD_LENGTH = 2642;
 
@@ -173,7 +176,7 @@ function isValidLayout(side: number, targetsPerZone: number, fieldMask: number):
   return (
     (side === 4 || side === 8) &&
     targetsPerZone >= 1 &&
-    targetsPerZone <= 4 &&
+    targetsPerZone <= MAX_TARGETS_PER_ZONE &&
     (fieldMask & ~KNOWN_FIELD_MASK) === 0
   );
 }

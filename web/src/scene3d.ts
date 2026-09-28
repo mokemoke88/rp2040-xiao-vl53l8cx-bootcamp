@@ -5,7 +5,9 @@
  *   geometry.ts の sensorToWorld で three.js の世界座標(右手系、m)の (x, y, −z) / 1000 に写す。前方は −z になる。
  *   基底の取り替えなので鏡像にはならない(センサー座標のまま入れると、センサーの後ろから見た左右が鏡像になる)
  * - WebGL のコンテキストが失われたとき(GPU のリセット等)は three.js が復帰を待ち、復帰したら描き直す
- * - 性能: ゾーンは最大 64 個なので、点・パッチの BufferGeometry は最大数ぶんを最初に確保し、
+ * - 点群: 各ゾーンで検出したターゲットをすべて描く(geometry.ts の buildPointCloud の "detected")。2 つ目以降の
+ *   ターゲットも見た目は区別しない(距離の色で分かる)。ほかの図(2D 画像・LiDAR 風ビュー)は最初のターゲットだけ
+ * - 性能: 点は最大 64 ゾーン × 4 ターゲット = 256 個なので、点・パッチの BufferGeometry は最大数ぶんを最初に確保し、
  *   フレームごとに属性の値だけを書き換える(オブジェクトを作り直さない)。
  *   描画はデータ・表示の設定・カメラが変わったときだけ(renderIfNeeded)
  * - WebGL が使えない環境では、コンストラクタが例外を投げる
@@ -13,7 +15,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import type { RangingFrame } from "./frame.ts";
+import { MAX_TARGETS_PER_ZONE, type RangingFrame } from "./frame.ts";
 import {
   buildPointCloud,
   frustumCorners,
@@ -50,6 +52,8 @@ export interface Scene3DOptions {
 }
 
 const MAX_ZONES = 64;
+/** 点(ターゲット)の最大数。各ゾーンで検出したターゲットをすべて描くため */
+const MAX_POINTS = MAX_ZONES * MAX_TARGETS_PER_ZONE;
 /** 1 つのパッチの頂点数(三角形 2 つ) */
 const PATCH_VERTICES = 6;
 /** 視野の四角錐を描く距離 [mm](VL53L8CX の最大測距距離 4 m) */
@@ -177,14 +181,14 @@ export class Scene3D {
       opacity: 0.25,
       depthWrite: false,
     });
-    this.validPoints = new THREE.Points(makeGeometry(MAX_ZONES, true), pointsMaterial);
-    this.invalidPoints = new THREE.Points(makeGeometry(MAX_ZONES, false), invalidPointsMaterial);
+    this.validPoints = new THREE.Points(makeGeometry(MAX_POINTS, true), pointsMaterial);
+    this.invalidPoints = new THREE.Points(makeGeometry(MAX_POINTS, false), invalidPointsMaterial);
     this.validPatches = new THREE.Mesh(
-      makeGeometry(MAX_ZONES * PATCH_VERTICES, true),
+      makeGeometry(MAX_POINTS * PATCH_VERTICES, true),
       patchMaterial,
     );
     this.invalidPatches = new THREE.Mesh(
-      makeGeometry(MAX_ZONES * PATCH_VERTICES, false),
+      makeGeometry(MAX_POINTS * PATCH_VERTICES, false),
       invalidPatchMaterial,
     );
     // 頂点を毎フレーム書き換えるので、境界球による視錐台カリングは使わない
@@ -240,7 +244,8 @@ export class Scene3D {
    */
   update(frame: RangingFrame | null, options: Scene3DOptions): void {
     this.updateFrustum(options.model);
-    const cloud = frame === null ? [] : buildPointCloud(frame, options.orientation, options.model);
+    const cloud =
+      frame === null ? [] : buildPointCloud(frame, options.orientation, options.model, "detected");
     const side = frame?.side ?? 8;
 
     const vPos = attributeArray(this.validPoints.geometry, "position");
@@ -259,7 +264,8 @@ export class Scene3D {
       // cloud が空でなければ frame は null でない
       const color =
         valid && frame !== null
-          ? (zoneValueColor(frame, p.zone, options.colorBy, options.ranges) ?? FALLBACK_RGB)
+          ? (zoneValueColor(frame, p.zone, options.colorBy, options.ranges, p.target) ??
+            FALLBACK_RGB)
           : null;
       if (options.display === "points") {
         if (color !== null) {
