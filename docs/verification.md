@@ -4,12 +4,15 @@
 
 ## 測距の設定の明示と版の文字列(1.0.0)
 
-未実施。
+2026-09-28、`tools/capture_serial.py` で `b` を送って 6 秒記録し、`tools/verification/decode_capture.py` でデコードして確認した(状態 1・ログ 1・フレーム 90、拒否 0、seq の欠落 0)。起動ログ(テキスト)、ブラウザの表示、sigma の分布は見ていない。
 
 - 起動ログの 1 行目が `xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)` であること。ブラウザの「状態メッセージ」の欄の版も同じであること
+  - 状態メッセージの版で確認済み: `xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)`
 - 起動ログに `sensor: mode autonomous, integration 5 ms, sharpener N%, order strongest` が出ること。**sharpener の実際の値**(UM3109 Rev 12 は 1%、データシートは 14% と食い違う)を記録する
+  - バイナリのログのメッセージ(INFO)で確認済み: `sensor: mode autonomous, integration 5 ms, sharpener 1%, order strongest`。**sharpener の既定値は 1%**(UM3109 Rev 12 の記述と一致)
 - ブラウザで接続すると、ログの欄に同じ `sensor: ...` の行が INFO で出ること
 - 明示の前後で動作が変わらないこと: 15 fps 前後、`B/frame` 972、sigma の分布(Step 2 の観測と同程度)
+  - fps と読み出しバイト数は確認済み: 14.91 fps(フレーム間隔 65.3〜70.8 ms、平均 67.1 ms)、状態メッセージの read 972 B
 - continuous(`-DBOOTCAMP_RANGING_CONTINUOUS=ON`)や積分時間を延ばした構成との比較(sigma の中央値・最大、有効なゾーン数、遠い壁までの最大距離、温度)— 未実施
 
 ## Step 5(最終デモ)
