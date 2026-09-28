@@ -4,12 +4,13 @@
 
 ## 測距の設定の明示と版の文字列(1.0.0)
 
-2026-09-28、`tools/capture_serial.py` で `b` を送って 6 秒記録し、`tools/verification/decode_capture.py` でデコードして確認した(状態 1・ログ 1・フレーム 90、拒否 0、seq の欠落 0)。起動ログ(テキスト)、ブラウザの表示、sigma の分布は見ていない。
+2026-09-28、実機で確認した。バイナリは `tools/capture_serial.py` で `b` を送って 6 秒記録し、`tools/verification/decode_capture.py` でデコードした(状態 1・ログ 1・フレーム 90、拒否 0、seq の欠落 0)。テキストの起動ログは、R ボタンでリセットして USB の再列挙後に開き直して記録した。ブラウザの表示と sigma の分布は見ていない。
 
 - 起動ログの 1 行目が `xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)` であること。ブラウザの「状態メッセージ」の欄の版も同じであること
-  - 状態メッセージの版で確認済み: `xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)`
+  - 確認済み(起動ログと、状態メッセージの版): `xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)`。起動ログは続けて `I2C bus recovery: 0 clocks, STOP sent, SDA=1 SCL=1`、`I2C1 399361 Hz (requested 400000 Hz)`、`sensor alive`、`init done in 2621 ms`、`sensor: ...`、`ranging 8x8 @ 15 Hz, 972 bytes per frame (press ? for help)` の順
+  - 起動ログを記録するときの注意: Windows の pyserial でポートを開く前に DTR を立てる設定にすると、ファームが DTR を見てすぐ出す最初の 4 行(版から `sensor alive` まで)が欠ける(pyserial の `open()` が DTR を立てた後に受信バッファを消すため)。DTR を立てずに開き、開いた後に立てると全行が取れる
 - 起動ログに `sensor: mode autonomous, integration 5 ms, sharpener N%, order strongest` が出ること。**sharpener の実際の値**(UM3109 Rev 12 は 1%、データシートは 14% と食い違う)を記録する
-  - バイナリのログのメッセージ(INFO)で確認済み: `sensor: mode autonomous, integration 5 ms, sharpener 1%, order strongest`。**sharpener の既定値は 1%**(UM3109 Rev 12 の記述と一致)
+  - 起動ログとバイナリのログのメッセージ(INFO)の両方で確認済み: `sensor: mode autonomous, integration 5 ms, sharpener 1%, order strongest`。**sharpener の既定値は 1%**(UM3109 Rev 12 の記述と一致)
 - ブラウザで接続すると、ログの欄に同じ `sensor: ...` の行が INFO で出ること
 - 明示の前後で動作が変わらないこと: 15 fps 前後、`B/frame` 972、sigma の分布(Step 2 の観測と同程度)
   - fps と読み出しバイト数は確認済み: 14.91 fps(フレーム間隔 65.3〜70.8 ms、平均 67.1 ms)、状態メッセージの read 972 B
