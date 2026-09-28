@@ -58,11 +58,16 @@ const MAX_POINTS = MAX_ZONES * MAX_TARGETS_PER_ZONE;
 const PATCH_VERTICES = 6;
 /** 視野の四角錐を描く距離 [mm](VL53L8CX の最大測距距離 4 m) */
 const FRUSTUM_MM = 4000;
+/** 視野の四角錐に断面を足す距離 [mm](近距離の目安) */
+const FRUSTUM_NEAR_MM = 1000;
 /** 床のグリッドの高さ [m](センサーの 0.5 m 下と仮定した目安) */
 const FLOOR_Y = -0.5;
 /** 距離の輪の間隔と最大 [m] */
 const RING_STEP_M = 0.5;
 const RING_MAX_M = 4;
+/** 近距離の細かい輪の間隔と最大 [m](0.5 m ごとの輪と重なる半径は描かない) */
+const FINE_RING_STEP_M = 0.1;
+const FINE_RING_MAX_M = 1;
 const RING_SEGMENTS = 48;
 const AXIS_M = 0.3;
 
@@ -71,8 +76,13 @@ const INVALID_GRAY = 0x8a8a85;
 /** 値の色がないとき(範囲がまだない等)の色 */
 const FALLBACK_RGB: Rgb = { r: 200, g: 200, b: 200 };
 
-const INITIAL_CAMERA = new THREE.Vector3(0.9, 0.8, 1.3);
-const INITIAL_TARGET = new THREE.Vector3(0, 0, -1.2);
+/**
+ * 初期の視点(世界座標 [m]。前方は −z)。センサーの右後ろ上から、奥行き約 1 m(0〜1 m の中央)を見る位置。
+ * 近距離(1 m 未満)で使うことが多いため(2026-09-28。以前は 0〜4 m 全体を収める (0.9, 0.8, 1.3) → (0, 0, −1.2))。
+ * 遠くの点はホイールで引くと見える
+ */
+const INITIAL_CAMERA = new THREE.Vector3(0.35, 0.3, 0.4);
+const INITIAL_TARGET = new THREE.Vector3(0, 0, -0.5);
 
 /** センサー座標 [mm] を three.js の世界座標 [m] に写して、配列に書く */
 function writeWorld(array: Float32Array, index: number, v: Vec3): void {
@@ -203,7 +213,7 @@ export class Scene3D {
     }
 
     this.frustum = new THREE.LineSegments(
-      makeGeometry(16, false),
+      makeGeometry(24, false),
       new THREE.LineBasicMaterial({ color: 0x6d6d68 }),
     );
     this.frustum.frustumCulled = false;
@@ -315,7 +325,7 @@ export class Scene3D {
     this.renderer.render(this.scene, this.camera);
   }
 
-  /** 視野の四角錐(原点から 4 隅への辺 4 本と、距離 FRUSTUM_MM での断面の 4 辺) */
+  /** 視野の四角錐(原点から 4 隅への辺 4 本と、距離 FRUSTUM_MM と FRUSTUM_NEAR_MM での断面の 4 辺ずつ) */
   private updateFrustum(model: DistanceModel): void {
     if (this.frustumModel === model) {
       return;
@@ -323,12 +333,18 @@ export class Scene3D {
     this.frustumModel = model;
     const pos = attributeArray(this.frustum.geometry, "position");
     const corners = frustumCorners(FRUSTUM_MM, model);
+    const near = frustumCorners(FRUSTUM_NEAR_MM, model);
     const origin: Vec3 = { x: 0, y: 0, z: 0 };
     let n = 0;
     for (const [i, c] of corners.entries()) {
       const next = corners[(i + 1) % corners.length] ?? c;
       writeWorld(pos, n++, origin);
       writeWorld(pos, n++, c);
+      writeWorld(pos, n++, c);
+      writeWorld(pos, n++, next);
+    }
+    for (const [i, c] of near.entries()) {
+      const next = near[(i + 1) % near.length] ?? c;
       writeWorld(pos, n++, c);
       writeWorld(pos, n++, next);
     }
@@ -342,13 +358,30 @@ export class Scene3D {
     return grid;
   }
 
-  /** 距離の輪(床の高さに、センサーの真下を中心とする前方の半円を 0.5 m ごと) */
+  /**
+   * 距離の輪(床の高さに、センサーの真下を中心とする前方の半円)。0.5 m ごとに 4 m まで、加えて 1 m までは
+   * 0.1 m ごとの細かい輪を暗い色で描く(0.5 m ごとの輪と同じ半径は除く)
+   */
   private makeRings(): THREE.Object3D {
-    const rings = Math.round(RING_MAX_M / RING_STEP_M);
-    const positions = new Float32Array(rings * RING_SEGMENTS * 2 * 3);
+    const coarse: number[] = [];
+    for (let k = 1; k <= Math.round(RING_MAX_M / RING_STEP_M); k++) {
+      coarse.push(k * RING_STEP_M);
+    }
+    const fine: number[] = [];
+    const perCoarse = Math.round(RING_STEP_M / FINE_RING_STEP_M);
+    for (let k = 1; k <= Math.round(FINE_RING_MAX_M / FINE_RING_STEP_M); k++) {
+      if (k % perCoarse !== 0) fine.push(k * FINE_RING_STEP_M);
+    }
+    const group = new THREE.Group();
+    group.add(this.makeRingLines(fine, 0x2f2f2b), this.makeRingLines(coarse, 0x46463f));
+    return group;
+  }
+
+  /** 半径の一覧から、床の高さの前方の半円を線で作る */
+  private makeRingLines(radii: readonly number[], color: number): THREE.Object3D {
+    const positions = new Float32Array(radii.length * RING_SEGMENTS * 2 * 3);
     let n = 0;
-    for (let k = 1; k <= rings; k++) {
-      const r = k * RING_STEP_M;
+    for (const r of radii) {
       for (let s = 0; s < RING_SEGMENTS; s++) {
         for (const t of [s, s + 1]) {
           const a = -Math.PI / 2 + (Math.PI * t) / RING_SEGMENTS;
@@ -360,7 +393,7 @@ export class Scene3D {
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x46463f }));
+    return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color }));
   }
 
   /** 軸: x(センサーから見て右)= 赤、y(上)= 緑、前方 = 青 */
