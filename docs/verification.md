@@ -4,7 +4,7 @@
 
 ## 測距の設定の明示と版の文字列(1.0.0)
 
-2026-09-28、実機で確認した。バイナリは `tools/capture_serial.py` で `b` を送って 6 秒記録し、`tools/verification/decode_capture.py` でデコードした(状態 1・ログ 1・フレーム 90、拒否 0、seq の欠落 0)。テキストの起動ログは、R ボタンでリセットして USB の再列挙後に開き直して記録した。ブラウザの表示と sigma の分布は見ていない。
+2026-09-28、実機で確認した。バイナリは `tools/capture_serial.py` で `b` を送って 6 秒記録し、`tools/verification/decode_capture.py` でデコードした(状態 1・ログ 1・フレーム 90、拒否 0、seq の欠落 0)。テキストの起動ログは、R ボタンでリセットして USB の再列挙後に開き直して記録した。ブラウザのログ欄はブラウザで接続して確認した。sigma の分布は見ていない。
 
 - 起動ログの 1 行目が `xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)` であること。ブラウザの「状態メッセージ」の欄の版も同じであること
   - 確認済み(起動ログと、状態メッセージの版): `xiao-vl53l8cx-bootcamp 1.0.0 (ULD VL53L8CX_2.0.0)`。起動ログは続けて `I2C bus recovery: 0 clocks, STOP sent, SDA=1 SCL=1`、`I2C1 399361 Hz (requested 400000 Hz)`、`sensor alive`、`init done in 2621 ms`、`sensor: ...`、`ranging 8x8 @ 15 Hz, 972 bytes per frame (press ? for help)` の順
@@ -12,6 +12,7 @@
 - 起動ログに `sensor: mode autonomous, integration 5 ms, sharpener N%, order strongest` が出ること。**sharpener の実際の値**(UM3109 Rev 12 は 1%、データシートは 14% と食い違う)を記録する
   - 起動ログとバイナリのログのメッセージ(INFO)の両方で確認済み: `sensor: mode autonomous, integration 5 ms, sharpener 1%, order strongest`。**sharpener の既定値は 1%**(UM3109 Rev 12 の記述と一致)
 - ブラウザで接続すると、ログの欄に同じ `sensor: ...` の行が INFO で出ること
+  - 確認済み(2026-09-28): 接続するたびに `[INFO] (seq 1 t=...) sensor: mode autonomous, integration 5 ms, sharpener 1%, order strongest` が 1 行出た(seq 0 の状態メッセージの直後)
 - 明示の前後で動作が変わらないこと: 15 fps 前後、`B/frame` 972、sigma の分布(Step 2 の観測と同程度)
   - fps と読み出しバイト数は確認済み: 14.91 fps(フレーム間隔 65.3〜70.8 ms、平均 67.1 ms)、状態メッセージの read 972 B
 - continuous(`-DBOOTCAMP_RANGING_CONTINUOUS=ON`)や積分時間を延ばした構成との比較(sigma の中央値・最大、有効なゾーン数、遠い壁までの最大距離、温度)— 未実施
